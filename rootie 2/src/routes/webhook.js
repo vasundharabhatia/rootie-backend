@@ -227,14 +227,26 @@ router.post('/', async (req, res) => {
     if (classified.message_type === 'parenting_question' || classified.needs_full_ai) {
       // Check free plan limit
       const access = await canAskQuestion(freshUser);
-      if (!access.allowed) {
-        const limitReply = getTemplateResponse('free_limit_reached');
-        await sendMessage(phoneNumber, limitReply);
-        await saveMessage(user.user_id, 'user',      messageText, messageId);
-        await saveMessage(user.user_id, 'assistant', limitReply,  null);
-        await incrementHitLimit(user.user_id);
-        return;
-      }
+    if (!access.allowed) {
+  let limitReply;
+
+  if (access.firstTimeBlocked) {
+    limitReply = getTemplateResponse('free_limit_first_time_plus_interest');
+
+    await updateUser(phoneNumber, {
+      rootie_plus_interested: true,
+      rootie_plus_interest_at: new Date().toISOString(),
+    });
+  } else {
+    limitReply = getTemplateResponse('free_limit_repeat_plus_interest');
+  }
+
+  await sendMessage(phoneNumber, limitReply);
+  await saveMessage(user.user_id, 'user', messageText, messageId);
+  await saveMessage(user.user_id, 'assistant', limitReply, null);
+  await incrementHitLimit(user.user_id);
+  return;
+}
 
       // Step 2: Full AI response
       await saveMessage(user.user_id, 'user', messageText, messageId);
