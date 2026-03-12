@@ -4,12 +4,13 @@
  * 5 tables, all created automatically on first startup.
  *
  * Tables:
- *   users          — one row per parent (WhatsApp number = primary identity)
- *   children       — one or more children per parent (Child Personality Blueprint)
- *   moments        — positive behaviors logged by parents
- *   conversations  — recent message history (last N messages only)
- *   family_summary — compact long-term memory (replaces full history in AI prompts)
- *   usage_tracking — daily free-plan usage counters
+ *   users              — one row per parent (WhatsApp number = primary identity)
+ *   children           — one or more children per parent (Child Personality Blueprint)
+ *   moments            — positive behaviors logged by parents
+ *   conversations      — recent message history (last N messages only)
+ *   family_summary     — compact long-term memory (replaces full history in AI prompts)
+ *   usage_tracking     — daily free-plan usage counters
+ *   weekend_activities — record of every weekend activity sent and its completion status
  */
 
 const { Pool } = require('pg');
@@ -122,6 +123,27 @@ const SCHEMA = `
     UNIQUE (user_id, date)
   );
   CREATE INDEX IF NOT EXISTS idx_usage_user_date ON usage_tracking (user_id, date);
+
+  -- ── Weekend Activities ───────────────────────────────────────────────────────
+  -- One row per activity sent to a user. Tracks whether the parent completed it
+  -- and when the Monday follow-up was sent. Used for the Connection Award system.
+  CREATE TABLE IF NOT EXISTS weekend_activities (
+    activity_id          SERIAL PRIMARY KEY,
+    user_id              INTEGER      NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    activity_text        TEXT         NOT NULL,          -- the activity that was sent
+    sent_at              TIMESTAMPTZ  DEFAULT NOW(),     -- when the activity was sent
+    followup_sent_at     TIMESTAMPTZ,                    -- when the Monday follow-up was sent
+    completed            BOOLEAN      DEFAULT false,     -- did the parent confirm completion?
+    completed_at         TIMESTAMPTZ,                    -- when they confirmed
+    award_sent           BOOLEAN      DEFAULT false      -- has the milestone award been sent for this activity?
+  );
+  CREATE INDEX IF NOT EXISTS idx_wa_user_id   ON weekend_activities (user_id);
+  CREATE INDEX IF NOT EXISTS idx_wa_sent_at   ON weekend_activities (sent_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_wa_completed ON weekend_activities (user_id, completed);
+
+  -- ── Migrate: add activity tracking columns to users for quick award lookups ──
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS activities_completed  SMALLINT DEFAULT 0;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS last_award_milestone  SMALLINT DEFAULT 0;
 `;
 
 async function initDatabase() {
