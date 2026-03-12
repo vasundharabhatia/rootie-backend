@@ -7,7 +7,7 @@
  */
 
 const { updateUser, getUserByPhone } = require("./userService");
-const { createChild } = require("./childService");
+const { createChild, findPotentialDuplicateChild } = require("./childService");
 const { setFlowSession, getFlowSession, clearFlowSession } = require("./flowSessionService");
 const { logger } = require("../utils/logger");
 
@@ -117,6 +117,11 @@ First things first — what's your name? 😊`,
     case 2: {
       const childName = text.length > 0 ? text : "your child";
 
+      const duplicate = await findPotentialDuplicateChild(user.user_id, childName);
+      if (duplicate) {
+        return `It looks like *${duplicate.child_name}* is already in your family profile. 🌱\n\nIf you meant the same child, reply with a different child's name.\nIf not, you can send a more distinct name like *Aarav S* or *Baby Aarav*.`;
+      }
+
       await setFlowSession(user.user_id, 'onboarding', 'pending_child', {
         childName,
       });
@@ -138,10 +143,19 @@ First things first — what's your name? 😊`,
       const age = parseInt(text, 10);
       const childAge = Number.isNaN(age) ? null : age;
 
-      await createChild(user.user_id, {
-        childName,
-        childAge,
-      });
+      try {
+        await createChild(user.user_id, {
+          childName,
+          childAge,
+        });
+      } catch (error) {
+        if (error.code === 'DUPLICATE_CHILD') {
+          await clearFlowSession(user.user_id);
+          await updateUser(user.whatsapp_number, { onboarding_step: 2 });
+          return `It looks like *${childName}* is already saved in your family profile. 🌱\n\nLet's try again — what's the child's name?`;
+        }
+        throw error;
+      }
 
       await clearFlowSession(user.user_id);
       await updateUser(user.whatsapp_number, { onboarding_step: 4 });
