@@ -6,17 +6,24 @@
  * reply twice in a row.
  *
  * Scenarios covered:
- *   moment_logged            — parent shared a positive child moment
- *   child_selection_needed   — multiple children, unclear which one
- *   free_limit_reached       — free user hit daily question limit
- *   daily_prompt             — outbound daily noticing challenge
- *   weekly_activity          — outbound weekly bonding activity
- *   general                  — greeting, thanks, or general chat
- *   daily_prompt_response    — parent replied to a daily prompt
- *   bonding_activity_response— parent replied to a weekly activity
- *   non_text                 — image, audio, or video received
- *   safety                   — crisis keywords detected (generic, no numbers)
- *   extreme_distress         — extreme language, rage, or severe distress
+ *   moment_logged              — parent shared a positive child moment
+ *   child_selection_needed     — multiple children, unclear which one
+ *   free_limit_reached         — free user hit daily question limit
+ *   daily_prompt               — outbound daily noticing challenge
+ *   weekly_activity            — outbound weekly bonding activity
+ *   general                    — greeting/chat from a NEW (unonboarded) user
+ *   general_returning_user     — greeting/chat from an already-onboarded user
+ *   daily_prompt_response      — parent replied to a daily prompt
+ *   bonding_activity_response  — parent replied to a weekly activity
+ *   non_text                   — image, audio, or video received
+ *   safety                     — crisis keywords detected (generic, no numbers)
+ *   extreme_distress           — extreme language, rage, or severe distress
+ *
+ * REPHRASING UPDATE:
+ * All templates rewritten to sound human and warm — less like an AI, more like
+ * a calm, supportive friend. Removed "prompt", "challenge", "noticing" framing
+ * from outbound headers. Added `general_returning_user` so Rootie does not
+ * re-introduce itself to users who are already onboarded.
  */
 
 // ─── Helper: pick a random item from an array ────────────────────────────────
@@ -42,15 +49,14 @@ const TEMPLATES = {
   // ── Moment logged ────────────────────────────────────────────────────────────
   moment_logged: (childName, category) => {
     const emoji = CATEGORY_EMOJI[category] || '🌱';
-    const label = category ? category.replace('_', ' ') : 'beautiful';
     const child = childName ? `*${childName}*` : 'your child';
 
     const variants = [
-      `That's a beautiful ${label} moment ${emoji}\n\nI've saved it to ${child}'s Kind Roots journey. These small moments are the ones that matter most. 🌱`,
-      `What a lovely thing to notice ${emoji}\n\n${child}'s ${label} moment has been added to their journey. You're paying attention — and that makes all the difference. 💛`,
-      `I love that you caught that ${emoji}\n\nA moment of ${label} — saved. ${child} is growing in ways you might not always see, but you're seeing them. 🌱`,
-      `That's one to remember ${emoji}\n\n${child}'s ${label} moment is now part of their Kind Roots story. Keep noticing — it adds up beautifully. 💛`,
-      `Beautiful ${emoji}\n\nI've logged that ${label} moment for ${child}. Every time you notice, you're telling them: *"I see you."* That's powerful parenting. 🌱`,
+      `What a wonderful thing to see. ${emoji} I've saved that to ${child}'s journey. It's these little moments that build so much. 🌱`,
+      `That's beautiful. Thank you for sharing. ${emoji} Saved. You have a great eye for these moments. 💛`,
+      `I love that. ${emoji} Every time you notice, you're telling them — I see you. That's powerful stuff. 🌱`,
+      `That's one to remember. ${emoji} I've saved it. Keep noticing the good things — it really does add up. 💛`,
+      `Thank you for sharing that with me. ${emoji} It's been added to ${child}'s story. You're doing a wonderful job. 🌱`,
     ];
     return pick(variants);
   },
@@ -58,10 +64,10 @@ const TEMPLATES = {
   // ── Child unclear ────────────────────────────────────────────────────────────
   child_selection_needed: () => {
     const variants = [
-      `That sounds like a lovely moment! 🌱\n\nWhich of your children are you referring to?`,
-      `I'd love to save that moment! 💛\n\nCould you tell me which child this is about?`,
-      `What a beautiful thing to share 🌱\n\nJust so I can save it correctly — which child are you talking about?`,
-      `I want to make sure I log this for the right little one 💛\n\nWhich child was this?`,
+      `That's a wonderful moment to share. Who are we celebrating? 🌱`,
+      `I'd love to save that. Which of your children was it? 💛`,
+      `That's beautiful. Just so I get it right — which child was this about? 🌱`,
+      `I want to make sure I log this for the right little one. Who was it? 💛`,
     ];
     return pick(variants);
   },
@@ -69,10 +75,9 @@ const TEMPLATES = {
   // ── Free plan limit reached ──────────────────────────────────────────────────
   free_limit_reached: () => {
     const variants = [
-      `You've used all 5 of today's questions 🌱\n\n*Rootie Plus* gives you unlimited parenting guidance, personalised to your child's personality and age.\n\nReply *UPGRADE* to learn more, or I'll be here again tomorrow! 💛`,
-      `You've reached your 5 daily questions for today 💛\n\nWith *Rootie Plus*, every question gets a personalised answer — no limits, no waiting.\n\nReply *UPGRADE* to unlock it, or come back tomorrow. 🌱`,
-      `That's all 5 of today's questions used up 🌱\n\nWant more? *Rootie Plus* gives you unlimited access to personalised parenting support.\n\nReply *UPGRADE* to find out more. See you tomorrow! 💛`,
-      `You've asked 5 questions today — that's today's free allowance 💛\n\nYou can still log moments and respond to today's prompt — those are always free.\n\nReply *UPGRADE* for unlimited questions with *Rootie Plus*. 🌱`,
+      `It looks like you've used all of today's questions. 🌱 You can still log as many moments as you like — that's always free. I'll be here to chat again tomorrow! 💛`,
+      `That's all of today's questions for now. 💛 If you often have more on your mind, Rootie Plus offers unlimited chats. Reply *UPGRADE* to learn more, or we can pick this up again tomorrow. 🌱`,
+      `We've reached today's limit on questions. 🌱 You can still share any positive moments you notice. Otherwise, I'm looking forward to talking more tomorrow! 💛`,
     ];
     return pick(variants);
   },
@@ -80,10 +85,9 @@ const TEMPLATES = {
   // ── Daily prompt (outbound) ──────────────────────────────────────────────────
   daily_prompt: (promptText) => {
     const variants = [
-      `*Kind Roots Moment* 🌱\n\n${promptText}`,
-      `*Your Kind Roots Noticing Challenge* 🌱\n\n${promptText}`,
-      `*Today's Moment to Notice* 🌱\n\n${promptText}`,
-      `*Kind Roots — Daily Noticing* 🌱\n\n${promptText}`,
+      `A little something to notice today... 🌱\n\n${promptText}`,
+      `Good morning! Here's a small thought for your day... 💛\n\n${promptText}`,
+      `Today's thought... 🌱\n\n${promptText}`,
     ];
     return pick(variants);
   },
@@ -91,21 +95,31 @@ const TEMPLATES = {
   // ── Weekly bonding activity (outbound) ───────────────────────────────────────
   weekly_activity: (activityText) => {
     const variants = [
-      `*Weekend Kind Roots Activity* 🌱\n\n${activityText}`,
-      `*This Week's Bonding Moment* 🌱\n\n${activityText}`,
-      `*Kind Roots — Weekly Activity* 🌱\n\n${activityText}`,
-      `*A Little Something for This Weekend* 🌱\n\n${activityText}`,
+      `A little idea for the weekend... 🌱\n\n${activityText}`,
+      `Something to try this weekend... 💛\n\n${activityText}`,
+      `Here's a small way to connect this weekend... 🌱\n\n${activityText}`,
     ];
     return pick(variants);
   },
 
   // ── General (greeting, thanks, general chat) ─────────────────────────────────
+  // For NEW users who are not yet onboarded — give the full intro.
   general: () => {
     const variants = [
-      `Hi there! 🌱 I'm Rootie, your parenting companion from Kind Roots.\n\nYou can:\n• Share a moment you noticed in your child\n• Ask a parenting question\n• Reply to today's daily prompt\n\nWhat's on your mind today? 💛`,
-      `Hello! 💛 Rootie here — your calm corner for parenting support.\n\nFeel free to:\n• Log a positive moment you noticed\n• Ask me a parenting question\n• Share how today went\n\nI'm listening. 🌱`,
-      `Good to hear from you! 🌱\n\nI'm Rootie — here to help you notice, celebrate, and navigate the beautiful chaos of parenting.\n\nShare a moment, ask a question, or just tell me how things are going. 💛`,
-      `Hey! 💛 I'm Rootie from Kind Roots.\n\nHere to help with:\n• Logging positive moments in your child's day\n• Parenting questions and gentle guidance\n• Weekly bonding activities\n\nWhat would you like to do today? 🌱`,
+      `Hi there! I'm Rootie. 🌱 A calm little space for parents to notice the good things and get a bit of support.\n\nYou can share a moment you noticed in your child, or ask me a parenting question. What's on your mind? 💛`,
+      `Hello! I'm Rootie. 🌱 I'm here to help you track the small, positive moments in your child's life, or to help with parenting questions.\n\nWhat would you like to do? 💛`,
+    ];
+    return pick(variants);
+  },
+
+  // ── General (returning, already onboarded user) ───────────────────────────────
+  // Short and warm — no re-introduction needed.
+  general_returning_user: () => {
+    const variants = [
+      `Good to hear from you. 💛`,
+      `Hello! How are things today? 🌱`,
+      `Hi there. What's on your mind? 💛`,
+      `I'm here. 🌱`,
     ];
     return pick(variants);
   },
@@ -113,11 +127,10 @@ const TEMPLATES = {
   // ── Daily prompt response ────────────────────────────────────────────────────
   daily_prompt_response: () => {
     const variants = [
-      `Thank you for sharing that 🌱 Every moment of noticing matters. You're doing beautifully. 💛`,
-      `I love that you took a moment to notice 💛 That awareness is one of the most powerful things a parent can offer. 🌱`,
-      `That's wonderful 🌱 The fact that you're paying attention — really paying attention — says so much about the parent you are. 💛`,
-      `Beautiful 💛 Noticing is the first step to everything. You're building something meaningful, one moment at a time. 🌱`,
-      `Thank you for that 🌱 Small moments like this are the ones children carry with them. You're doing great. 💛`,
+      `Thank you for sharing that. 🌱 Every moment of noticing matters. You're doing beautifully. 💛`,
+      `I love that you took a moment to notice. 💛 That awareness is one of the most powerful things a parent can offer. 🌱`,
+      `That's wonderful. 🌱 The fact that you're paying attention says so much about the parent you are. 💛`,
+      `Beautiful. 💛 Noticing is the first step to everything. You're building something meaningful, one moment at a time. 🌱`,
     ];
     return pick(variants);
   },
@@ -125,11 +138,10 @@ const TEMPLATES = {
   // ── Bonding activity response ────────────────────────────────────────────────
   bonding_activity_response: () => {
     const variants = [
-      `That's wonderful to hear! 🌱 Those conversations stay with children long after they happen. You're building something beautiful together. 💛`,
-      `I love hearing that 💛 Time like that — unhurried, present — is exactly what children remember. Well done. 🌱`,
-      `That sounds like a really special moment 🌱 You showed up, and that's everything. 💛`,
-      `What a lovely thing to do together 💛 Connection like that is the foundation of everything. Keep going. 🌱`,
-      `That's the kind of memory that lasts 🌱 Thank you for making the time. Your child felt it. 💛`,
+      `That's wonderful to hear. 🌱 Those conversations stay with children long after they happen. 💛`,
+      `I love hearing that. 💛 Time like that — unhurried, present — is exactly what children remember. 🌱`,
+      `That sounds like a really special moment. 🌱 You showed up, and that's everything. 💛`,
+      `What a lovely thing to do together. 💛 Connection is the foundation of it all. 🌱`,
     ];
     return pick(variants);
   },
@@ -180,10 +192,9 @@ You'll be among the first to know when it launches. Thank you for being part of 
   // ── Non-text message ─────────────────────────────────────────────────────────
   non_text: () => {
     const variants = [
-      `I can only read text messages right now 😊 Please type your message and I'll help!`,
-      `I'm not able to open that just yet 😊 Send me a text message and I'll be right with you!`,
-      `I work best with text for now 🌱 Type out what's on your mind and I'll respond!`,
-      `I can't read that format yet 😊 But if you type it out, I'm all ears! 💛`,
+      `I can only read text messages for now. 😊 Please type your message and I'll help!`,
+      `I'm not able to open that just yet. 😊 Send me a text message and I'll be right with you!`,
+      `I work best with text for now. 🌱 Type out what's on your mind and I'll respond!`,
     ];
     return pick(variants);
   },
@@ -219,7 +230,7 @@ You'll be among the first to know when it launches. Thank you for being part of 
  * Returns null if no template exists (caller falls back to full AI).
  *
  * @param {string} type
- * @param {object} [data] — optional data: { childName, category, promptText, activityText }
+ * @param {object} [data] — optional data: { childName, category, promptText, activityText, isNewUser }
  * @returns {string|null}
  */
 function getTemplateResponse(type, data = {}) {
@@ -245,7 +256,11 @@ function getTemplateResponse(type, data = {}) {
       );
 
     case 'general':
-      return TEMPLATES.general();
+      // Pass isNewUser: true for unonboarded users to get the full intro.
+      // Pass isNewUser: false (or omit) for returning users to get a short greeting.
+      return data.isNewUser
+        ? TEMPLATES.general()
+        : TEMPLATES.general_returning_user();
 
     case 'daily_prompt_response':
       return TEMPLATES.daily_prompt_response();
