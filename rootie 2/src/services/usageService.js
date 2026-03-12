@@ -4,7 +4,7 @@
  * Tracks daily usage per user for free-plan limits.
  *
  * Free plan limits:
- *   - 1 parenting question per day
+ *   - 5 parenting questions per day
  *   - Unlimited moment logging
  *   - Daily prompts + weekly activities (always free)
  *
@@ -17,7 +17,7 @@
 
 const { query } = require('../db/database');
 
-const FREE_QUESTION_LIMIT = parseInt(process.env.FREE_QUESTION_LIMIT || '1', 10);
+const FREE_QUESTION_LIMIT = parseInt(process.env.FREE_QUESTION_LIMIT || '5', 10);
 
 // ─── Get or create today's usage row ─────────────────────────────────────
 async function getTodayUsage(userId) {
