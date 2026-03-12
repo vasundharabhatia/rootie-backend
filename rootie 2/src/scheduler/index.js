@@ -13,13 +13,19 @@
  *
  * 3. Weekly Bonding Activity — 1× per week (Saturday)
  *    A 5-minute bonding activity for the whole family. Rotates through 7 activities.
+ *    The activity text is saved to weekend_activities so a Monday follow-up can be sent.
+ *
+ * 4. Weekend Activity Follow-up — 1× per week (Monday morning)
+ *    Checks which users received a weekend activity and asks if they completed it.
+ *    Replies are handled in webhook.js → activityTrackingService.js.
  *
  * Weekly message rhythm per parent:
  *   Tuesday   → Noticing Prompt
  *   Wednesday → Moment Nudge
  *   Friday    → Noticing Prompt
- *   Saturday  → Bonding Activity
- *   (Monday, Thursday, Sunday — no proactive messages)
+ *   Saturday  → Bonding Activity  (recorded in weekend_activities table)
+ *   Monday    → Weekend Activity Follow-up
+ *   (Thursday, Sunday — no proactive messages)
  *
  * ── Timezone-aware delivery ────────────────────────────────────────────────────
  * The scheduler runs every hour (at :00). On each tick it checks which users
@@ -36,7 +42,12 @@ const { logger } = require('../utils/logger');
 const { getOnboardedUsers } = require('../services/userService');
 const { sendMessage }       = require('../services/whatsappService');
 const { saveMessage }       = require('../services/conversationService');
-const { getTemplateResponse } = require('../services/templateService');
+const { getTemplateResponse }        = require('../services/templateService');
+const {
+  recordActivitySent,
+  getUsersForMondayFollowup,
+  markFollowupSent,
+} = require('../services/activityTrackingService');
 
 // ─── Noticing Prompts (20 items, rotating) ────────────────────────────────
 const DAILY_PROMPTS = [
@@ -187,9 +198,7 @@ async function sendMomentNudge() {
   } catch (err) {
     logger.error('Moment nudge job failed', { error: err.message });
   }
-}
-
-// ─── Job: Weekly Bonding Activity (Saturday) ──────────────────────────────
+}// ─── Job: Weekly Bonding Activity (Saturday) ──────────────────────────────────
 async function sendWeeklyActivities() {
   logger.info('Weekly activity job started');
   try {
@@ -204,13 +213,72 @@ async function sendWeeklyActivities() {
     weeklyIndex++;
     const message      = getTemplateResponse('weekly_activity', { activityText });
 
-    const { sent, failed } = await deliverToUsers(dueUsers, message);
+    let sent = 0, failed = 0;
+    for (const user of dueUsers) {
+      try {
+        await sendMessage(user.whatsapp_number, message);
+        await saveMessage(user.user_id, 'assistant', message, null);
+        // Record the activity so Monday follow-up knows what was sent
+        await recordActivitySent(user.user_id, activityText);
+        sent++;
+      } catch (err) {
+        logger.error('Failed to deliver weekly activity', {
+          userId: user.user_id, error: err.message,
+        });
+        failed++;
+      }
+    }
     logger.info('Weekly activity job complete', { sent, failed, total: dueUsers.length });
   } catch (err) {
     logger.error('Weekly activity job failed', { error: err.message });
   }
 }
 
+// ─── Job: Weekend Activity Follow-up (Monday morning) ──────────────────────────
+// Sends a gentle check-in to every user who received a weekend activity
+// but has not yet been asked if they completed it.
+// Runs every hour on Monday so it respects each user's preferred reminder_hour.
+async function sendWeekendActivityFollowups() {
+  logger.info('Weekend activity follow-up job started');
+  try {
+    const usersForFollowup = await getUsersForMondayFollowup();
+    if (!usersForFollowup.length) {
+      logger.info('Weekend follow-up job: no users to follow up with this hour');
+      return;
+    }
+
+    // Filter to users whose preferred reminder_hour matches the current local hour
+    const allUsers = await getOnboardedUsers();
+    const userMap  = new Map(allUsers.map(u => [u.user_id, u]));
+
+    let sent = 0, failed = 0;
+    for (const row of usersForFollowup) {
+      const userProfile = userMap.get(row.user_id);
+      if (!userProfile) continue;
+
+      const tz           = userProfile.timezone     || 'UTC';
+      const preferredHr  = userProfile.reminder_hour != null ? userProfile.reminder_hour : 8;
+      const currentLocal = localHourInTimezone(tz);
+      if (currentLocal !== preferredHr) continue; // not their preferred hour yet
+
+      try {
+        const message = getTemplateResponse('weekend_activity_followup');
+        await sendMessage(row.whatsapp_number, message);
+        await saveMessage(row.user_id, 'assistant', message, null);
+        await markFollowupSent(row.activity_id);
+        sent++;
+      } catch (err) {
+        logger.error('Failed to send weekend follow-up', {
+          userId: row.user_id, error: err.message,
+        });
+        failed++;
+      }
+    }
+    logger.info('Weekend follow-up job complete', { sent, failed });
+  } catch (err) {
+    logger.error('Weekend follow-up job failed', { error: err.message });
+  }
+}
 // ─── Start schedulers ─────────────────────────────────────────────────────
 // All jobs now run every hour at :00.
 // The getUsersDueNow() filter ensures each user only receives a message
@@ -229,6 +297,10 @@ function startWeeklyScheduler() {
   // Bonding Activity: every hour, Saturday (6)
   cron.schedule('0 0 * * * 6', sendWeeklyActivities);
   logger.info('Weekly activity scheduler started (Sat, hourly dispatch)');
+
+  // Weekend Activity Follow-up: every hour, Monday (1)
+  cron.schedule('0 0 * * * 1', sendWeekendActivityFollowups);
+  logger.info('Weekend activity follow-up scheduler started (Mon, hourly dispatch)');
 }
 
 module.exports = {
@@ -237,4 +309,5 @@ module.exports = {
   sendDailyPrompts,
   sendMomentNudge,
   sendWeeklyActivities,
+  sendWeekendActivityFollowups,
 };
