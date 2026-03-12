@@ -82,6 +82,26 @@ const { setPendingAction,
         getPendingAction,
         clearPendingAction } = require('../services/pendingActionService');
 
+function buildChildSelectionReply(children) {
+  const list = children.map((c, i) => `• *${i + 1}* — ${c.child_name}`).join('\n');
+  return (
+    `That's beautiful. Just so I log it for the right child — who was this about? 🌱\n\n` +
+    `${list}\n\n` +
+    `You can reply with the *number* or the *name*.`
+  );
+}
+
+function resolveChildFromReply(messageText, children) {
+  const text = messageText.trim();
+  const idx = parseInt(text, 10);
+
+  if (!Number.isNaN(idx) && idx >= 1 && idx <= children.length) {
+    return children[idx - 1];
+  }
+
+  const lower = text.toLowerCase();
+  return children.find(c => c.child_name.toLowerCase() === lower) || null;
+}
 // ─── GET /webhook — Meta verification ─────────────────────────────────────
 router.get('/', (req, res) => {
   const mode      = req.query['hub.mode'];
@@ -193,7 +213,49 @@ router.post('/', async (req, res) => {
       await incrementMessages(user.user_id);
       return;
     }
+    // ── Pending child selection resolution ───────────────────────────────────
+    const pendingAction = await getPendingAction(user.user_id);
 
+    if (pendingAction && pendingAction.action_type === 'child_selection_for_moment') {
+      const currentChildren = await getChildrenByUserId(user.user_id);
+      const selectedChild = resolveChildFromReply(messageText, currentChildren);
+
+      if (!selectedChild) {
+        const reply = buildChildSelectionReply(currentChildren);
+        await sendMessage(phoneNumber, reply);
+        await saveMessage(user.user_id, 'user', messageText, messageId);
+        await saveMessage(user.user_id, 'assistant', reply, null);
+        await incrementMessages(user.user_id);
+        return;
+      }
+
+      const payload = pendingAction.payload || {};
+      const originalClassified = payload.classified || {};
+      const originalRawMessage = payload.rawMessage || '';
+
+      const resolvedClassified = {
+        ...originalClassified,
+        message_type: 'moment_log',
+        child_name: selectedChild.child_name,
+      };
+
+      const freshUser = await getUserByPhone(phoneNumber);
+      const reply = await handleMomentLog(
+        freshUser,
+        currentChildren,
+        resolvedClassified,
+        originalRawMessage
+      );
+
+      await clearPendingAction(user.user_id);
+
+      await sendMessage(phoneNumber, reply);
+      await saveMessage(user.user_id, 'user', messageText, messageId);
+      await saveMessage(user.user_id, 'assistant', reply, null);
+      await incrementMoments(user.user_id);
+      await incrementMessages(user.user_id);
+      return;
+    }
     // ── Step 1: Classify the message ────────────────────────────────────────
     const children   = await getChildrenByUserId(user.user_id);
     const freshUser  = await getUserByPhone(phoneNumber);
@@ -218,15 +280,20 @@ router.post('/', async (req, res) => {
       return;
     }
 
-    // B) Child unclear — ask which child
+        // B) Child unclear — persist original moment and ask which child
     if (classified.message_type === 'child_selection_needed') {
-      const reply = getTemplateResponse('child_selection_needed');
+      await setPendingAction(user.user_id, 'child_selection_for_moment', {
+        rawMessage: messageText,
+        classified,
+      });
+
+      const reply = buildChildSelectionReply(children);
       await sendMessage(phoneNumber, reply);
-      await saveMessage(user.user_id, 'user',      messageText, messageId);
-      await saveMessage(user.user_id, 'assistant', reply,       null);
+      await saveMessage(user.user_id, 'user', messageText, messageId);
+      await saveMessage(user.user_id, 'assistant', reply, null);
+      await incrementMessages(user.user_id);
       return;
     }
-
     // C) Parenting question or anything needing full AI
     if (classified.message_type === 'parenting_question' || classified.needs_full_ai) {
       // Check free plan limit
@@ -264,11 +331,20 @@ router.post('/', async (req, res) => {
 
     // D) Weekend activity completion — parent replied to Monday follow-up
     if (classified.message_type === 'weekend_activity_completion') {
-      const { reply_template } = await handleActivityCompletion(user.user_id);
-      const reply = getTemplateResponse(reply_template) || getTemplateResponse('weekend_activity_confirmed');
+      const { reply_template } = await handleActivityCompletion(
+        user.user_id,
+        classified.activity_done
+      );
+
+      const reply =
+        getTemplateResponse(reply_template) ||
+        getTemplateResponse(
+          classified.activity_done ? 'weekend_activity_confirmed' : 'weekend_activity_skipped'
+        );
+
       await sendMessage(phoneNumber, reply);
-      await saveMessage(user.user_id, 'user',      messageText, messageId);
-      await saveMessage(user.user_id, 'assistant', reply,       null);
+      await saveMessage(user.user_id, 'user', messageText, messageId);
+      await saveMessage(user.user_id, 'assistant', reply, null);
       await incrementMessages(user.user_id);
       return;
     }
