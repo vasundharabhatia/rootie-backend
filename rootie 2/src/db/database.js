@@ -55,19 +55,23 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS rootie_plus_interest_at TIMESTAMPTZ;
   -- ── Children ────────────────────────────────────────────────────────────────
   -- Multiple children per parent. These fields form the Child Personality Blueprint
   -- used to personalise AI responses.
-  CREATE TABLE IF NOT EXISTS children (
-    child_id          SERIAL PRIMARY KEY,
-    user_id           INTEGER      NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    child_name        VARCHAR(100) NOT NULL,
-    child_age         SMALLINT,
-    temperament       VARCHAR(100),   -- e.g. "slow-to-warm", "easy-going", "spirited"
-    sensitivity_level VARCHAR(50),    -- e.g. "high", "medium", "low"
-    social_style      VARCHAR(100),   -- e.g. "introverted", "extroverted"
-    strengths         TEXT,           -- free text: "empathy, curiosity"
-    challenges        TEXT,           -- free text: "transitions, loud environments"
-    created_at        TIMESTAMPTZ  DEFAULT NOW()
+    CREATE TABLE IF NOT EXISTS children (
+    child_id           SERIAL PRIMARY KEY,
+    user_id            INTEGER      NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    child_name         VARCHAR(100) NOT NULL,
+    child_age          SMALLINT,
+    temperament        VARCHAR(100),   -- e.g. "slow-to-warm", "easy-going", "spirited"
+    sensitivity_level  VARCHAR(50),    -- e.g. "high", "medium", "low"
+    social_style       VARCHAR(100),   -- e.g. "introverted", "extroverted"
+    strengths          TEXT,           -- free text: "empathy, curiosity"
+    challenges         TEXT,           -- free text: "transitions, loud environments"
+    is_archived        BOOLEAN      DEFAULT false,
+    archived_at        TIMESTAMPTZ,
+    created_at         TIMESTAMPTZ  DEFAULT NOW()
   );
   CREATE INDEX IF NOT EXISTS idx_children_user_id ON children (user_id);
+  ALTER TABLE children ADD COLUMN IF NOT EXISTS is_archived BOOLEAN DEFAULT false;
+  ALTER TABLE children ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
 
   -- ── Moments ─────────────────────────────────────────────────────────────────
   -- Positive behaviors noticed by parents. Logged automatically when the
