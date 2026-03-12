@@ -64,6 +64,8 @@ const { getChildrenByUserId } = require('../services/childService');
 const { handleOnboarding }    = require('../services/onboardingService');
 const { handleProfileUpdate,
         isProfileUpdateTrigger,
+        isProfileViewTrigger,
+        handleProfileView,
         hasActiveSession }    = require('../services/profileUpdateService');
 const { classifyMessage }     = require('../services/classifierService');
 const { getTemplateResponse } = require('../services/templateService');
@@ -201,16 +203,25 @@ router.post('/', async (req, res) => {
       return;
     }
 
+        // ── Profile view intercept ──────────────────────────────────────────────
+    if (isProfileViewTrigger(messageText)) {
+      const freshUser = await getUserByPhone(phoneNumber);
+      const profileViewReply = await handleProfileView(freshUser, messageText);
+      await sendMessage(phoneNumber, profileViewReply);
+      await saveMessage(user.user_id, 'user', messageText, messageId);
+      await saveMessage(user.user_id, 'assistant', profileViewReply, null);
+      await incrementMessages(user.user_id);
+      return;
+    }
+
     // ── Profile update intercept ────────────────────────────────────────────
-    // Triggered by keywords like "update profile", "change my name", "wrong child name"
-    // OR when the user is already mid-way through an edit session.
     const profileSessionActive = await hasActiveSession(user.user_id);
 
     if (isProfileUpdateTrigger(messageText) || profileSessionActive) {
-      const freshUser    = await getUserByPhone(phoneNumber);
+      const freshUser = await getUserByPhone(phoneNumber);
       const profileReply = await handleProfileUpdate(freshUser, messageText);
       await sendMessage(phoneNumber, profileReply);
-      await saveMessage(user.user_id, 'user',      messageText,  messageId);
+      await saveMessage(user.user_id, 'user', messageText, messageId);
       await saveMessage(user.user_id, 'assistant', profileReply, null);
       await incrementMessages(user.user_id);
       return;
