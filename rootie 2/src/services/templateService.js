@@ -69,10 +69,10 @@ const TEMPLATES = {
   // ── Free plan limit reached ──────────────────────────────────────────────────
   free_limit_reached: () => {
     const variants = [
-      `You've used today's question 🌱\n\n*Rootie Plus* gives you unlimited parenting guidance, personalised to your child's personality and age.\n\nReply *UPGRADE* to learn more, or I'll be here again tomorrow! 💛`,
-      `You've reached your daily question for today 💛\n\nWith *Rootie Plus*, every question gets a personalised answer — no limits, no waiting.\n\nReply *UPGRADE* to unlock it, or come back tomorrow. 🌱`,
-      `That's your question for today used up 🌱\n\nWant more? *Rootie Plus* gives you unlimited access to personalised parenting support.\n\nReply *UPGRADE* to find out more. See you tomorrow! 💛`,
-      `Today's question has been used 💛\n\nIn the meantime, you can still log moments and respond to today's prompt — those are always free.\n\nReply *UPGRADE* for unlimited questions with *Rootie Plus*. 🌱`,
+      `You've used all 5 of today's questions 🌱\n\n*Rootie Plus* gives you unlimited parenting guidance, personalised to your child's personality and age.\n\nReply *UPGRADE* to learn more, or I'll be here again tomorrow! 💛`,
+      `You've reached your 5 daily questions for today 💛\n\nWith *Rootie Plus*, every question gets a personalised answer — no limits, no waiting.\n\nReply *UPGRADE* to unlock it, or come back tomorrow. 🌱`,
+      `That's all 5 of today's questions used up 🌱\n\nWant more? *Rootie Plus* gives you unlimited access to personalised parenting support.\n\nReply *UPGRADE* to find out more. See you tomorrow! 💛`,
+      `You've asked 5 questions today — that's today's free allowance 💛\n\nYou can still log moments and respond to today's prompt — those are always free.\n\nReply *UPGRADE* for unlimited questions with *Rootie Plus*. 🌱`,
     ];
     return pick(variants);
   },
