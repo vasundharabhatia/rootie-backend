@@ -156,15 +156,19 @@ async function handleOnboarding(user, messageText, displayName) {
 
     // ── Step 4: More children? → if no, ask for preferred reminder time ──
     case 4: {
-      const answer = text.toLowerCase();
+      const answer = text.trim().toLowerCase();
 
-      if (answer.startsWith("y")) {
+      if (['yes', 'y'].includes(answer)) {
         await updateUser(user.whatsapp_number, { onboarding_step: 2 });
         return `Great! What's your next child's name?`;
       }
 
-      await updateUser(user.whatsapp_number, { onboarding_step: 5 });
-      return `Almost done! Last question. 🌱\n\nI'll send you a little thought or activity a few times a week.\n\nWhat time of day works best for you? (e.g. *8am*, *evening*)`;
+      if (['no', 'n'].includes(answer)) {
+        await updateUser(user.whatsapp_number, { onboarding_step: 5 });
+        return `Almost done! Last question. 🌱\n\nI'll send you a little thought or activity a few times a week.\n\nWhat time of day works best for you? (e.g. *8am*, *evening*)`;
+      }
+
+      return `Please reply with *Yes* or *No* so I know whether to add another child. 🌱`;
     }
 
     // ── Step 5: Save reminder time + timezone → complete onboarding ──────
