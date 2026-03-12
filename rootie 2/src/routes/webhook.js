@@ -246,7 +246,7 @@ router.post('/', async (req, res) => {
     }
 
     // D) General / daily_prompt_response / bonding_activity_response
-    const templateReply = getTemplateResponse(classified.message_type);
+    const templateReply = getTemplateResponse(classified.message_type, { isNewUser: !user.onboarding_complete });
     if (templateReply) {
       await sendMessage(phoneNumber, templateReply);
       await saveMessage(user.user_id, 'user',      messageText,   messageId);
