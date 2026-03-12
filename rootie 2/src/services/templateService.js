@@ -165,6 +165,14 @@ You can still log *unlimited child moments* anytime — that part stays free.`;
     ];
     return pick(variants);
   },
+    weekend_activity_skipped: () => {
+    const variants = [
+      `That’s completely okay. 💛 These things happen. I’ll count this one as skipped, and we can always try again next weekend. 🌱`,
+      `No worries at all. 🌱 I’ve marked this one as not done. Parenting is full already — there’s always another chance next time. 💛`,
+      `That’s okay. 💛 I’ve marked it as skipped for this week. Small moments still count, even when plans don’t happen. 🌱`,
+    ];
+    return pick(variants);
+  },
 
   // ── Connection Awards (Weekend Activity Milestones) ──────────────────────────
   award_milestone_3: () => {
@@ -297,6 +305,8 @@ case 'free_limit_repeat_plus_interest':
 
     case 'weekend_activity_confirmed':
       return TEMPLATES.weekend_activity_confirmed();
+       case 'weekend_activity_skipped':
+      return TEMPLATES.weekend_activity_skipped();
 
     case 'award_milestone_3':
       return TEMPLATES.award_milestone_3();
