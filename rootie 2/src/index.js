@@ -39,15 +39,15 @@
 
 const cron       = require('node-cron');
 const { logger } = require('./utils/logger');
-const { getOnboardedUsers } = require('../services/userService');
-const { sendMessage }       = require('../services/whatsappService');
-const { saveMessage }       = require('../services/conversationService');
-const { getTemplateResponse }        = require('../services/templateService');
+const { getOnboardedUsers } = require('./services/userService');
+const { sendMessage }       = require('./services/whatsappService');
+const { saveMessage }       = require('./services/conversationService');
+const { getTemplateResponse }        = require('./services/templateService');
 const {
   recordActivitySent,
   getUsersForMondayFollowup,
   markFollowupSent,
-} = require('../services/activityTrackingService');
+} = require('./services/activityTrackingService');
 
 // ─── Noticing Prompts (20 items, rotating) ────────────────────────────────
 const DAILY_PROMPTS = [
