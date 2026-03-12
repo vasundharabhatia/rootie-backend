@@ -12,14 +12,17 @@
  *   5.  Get or create user
  *   6.  Handle non-text messages
  *   7.  Route:
- *       a. Onboarding (not complete) → onboardingService
- *       b. Safety check             → safetyService
- *       c. Step 1: Classify message → classifierService
- *       d. Route by message_type:
- *          - moment_log             → log moment, send template reply
- *          - child_selection_needed → ask which child
- *          - parenting_question     → check plan limit → Step 2 AI
- *          - general / other        → Step 2 AI (if needed) or template
+ *       a. Onboarding (not complete)  → onboardingService
+ *       b. Safety check               → safetyService
+ *       c. UPGRADE keyword intercept  → upgrade_coming_soon template
+ *       d. Profile update trigger     → profileUpdateService (edit name/child/time)
+ *       e. Active profile edit session→ profileUpdateService (continue flow)
+ *       f. Step 1: Classify message   → classifierService
+ *       g. Route by message_type:
+ *          - moment_log              → log moment, send template reply
+ *          - child_selection_needed  → ask which child
+ *          - parenting_question      → check plan limit → Step 2 AI
+ *          - general / other         → Step 2 AI (if needed) or template
  *   8.  Save conversation, update usage
  */
 
@@ -34,9 +37,11 @@ const { parseInbound,
 const { getOrCreateUser,
         getUserByPhone,
         updateLastActive }    = require('../services/userService');
-const { getChildrenByUserId,
-        getChildByName }      = require('../services/childService');
+const { getChildrenByUserId } = require('../services/childService');
 const { handleOnboarding }    = require('../services/onboardingService');
+const { handleProfileUpdate,
+        isProfileUpdateTrigger,
+        hasActiveSession }    = require('../services/profileUpdateService');
 const { classifyMessage }     = require('../services/classifierService');
 const { getTemplateResponse } = require('../services/templateService');
 const { handleMomentLog }     = require('../services/momentHandlerService');
@@ -127,34 +132,44 @@ router.post('/', async (req, res) => {
     }
 
     // ── UPGRADE keyword intercept ───────────────────────────────────────────
-    // Catch "upgrade", "UPGRADE", "Upgrade" etc. before the classifier.
-    // Log the intent (hit_limit_count acts as a proxy) and send coming-soon message.
     if (/^upgrade$/i.test(messageText.trim())) {
       const upgradeReply = getTemplateResponse('upgrade_coming_soon');
       await sendMessage(phoneNumber, upgradeReply);
       await saveMessage(user.user_id, 'user',      messageText,   messageId);
       await saveMessage(user.user_id, 'assistant', upgradeReply,  null);
-      // Reuse hit_limit_count as an upgrade-intent signal
       await incrementHitLimit(user.user_id);
       logger.info('Upgrade intent captured', { phone: phoneNumber });
       return;
     }
 
+    // ── Profile update intercept ────────────────────────────────────────────
+    // Triggered by keywords like "update profile", "change my name", "wrong child name"
+    // OR when the user is already mid-way through an edit session.
+    if (isProfileUpdateTrigger(messageText) || hasActiveSession(user.user_id)) {
+      const freshUser    = await getUserByPhone(phoneNumber);
+      const profileReply = await handleProfileUpdate(freshUser, messageText);
+      await sendMessage(phoneNumber, profileReply);
+      await saveMessage(user.user_id, 'user',      messageText,  messageId);
+      await saveMessage(user.user_id, 'assistant', profileReply, null);
+      await incrementMessages(user.user_id);
+      return;
+    }
+
     // ── Step 1: Classify the message ────────────────────────────────────────
-    const children    = await getChildrenByUserId(user.user_id);
-    const freshUser   = await getUserByPhone(phoneNumber);
-    const classified  = await classifyMessage(messageText, children);
+    const children   = await getChildrenByUserId(user.user_id);
+    const freshUser  = await getUserByPhone(phoneNumber);
+    const classified = await classifyMessage(messageText, children);
 
     logger.info('Message classified', {
-      type: classified.message_type,
+      type:          classified.message_type,
       needs_full_ai: classified.needs_full_ai,
-      confidence: classified.confidence_score,
+      confidence:    classified.confidence_score,
     });
 
     // ── Route by message type ───────────────────────────────────────────────
 
     // A) Moment log — no AI needed
-    if (classified.message_type === 'moment_log' && !classified.needs_full_ai) {
+    if (classified.message_type === 'moment_log') {
       const reply = await handleMomentLog(freshUser, children, classified, messageText);
       await sendMessage(phoneNumber, reply);
       await saveMessage(user.user_id, 'user',      messageText, messageId);
@@ -166,7 +181,7 @@ router.post('/', async (req, res) => {
 
     // B) Child unclear — ask which child
     if (classified.message_type === 'child_selection_needed') {
-      const reply = getTemplateResponse('child_unclear');
+      const reply = getTemplateResponse('child_selection_needed');
       await sendMessage(phoneNumber, reply);
       await saveMessage(user.user_id, 'user',      messageText, messageId);
       await saveMessage(user.user_id, 'assistant', reply,       null);
@@ -180,9 +195,8 @@ router.post('/', async (req, res) => {
       if (!access.allowed) {
         const limitReply = getTemplateResponse('free_limit_reached');
         await sendMessage(phoneNumber, limitReply);
-        await saveMessage(user.user_id, 'user',        messageText, messageId);
-        await saveMessage(user.user_id, 'assistant',   limitReply,  null);
-        // Track that this parent hit the limit — key paid-conversion signal
+        await saveMessage(user.user_id, 'user',      messageText, messageId);
+        await saveMessage(user.user_id, 'assistant', limitReply,  null);
         await incrementHitLimit(user.user_id);
         return;
       }
@@ -198,7 +212,6 @@ router.post('/', async (req, res) => {
     }
 
     // D) General / daily_prompt_response / bonding_activity_response
-    // Use template if available, otherwise call AI
     const templateReply = getTemplateResponse(classified.message_type);
     if (templateReply) {
       await sendMessage(phoneNumber, templateReply);
