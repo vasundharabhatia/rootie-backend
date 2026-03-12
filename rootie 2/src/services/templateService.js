@@ -61,6 +61,28 @@ const TEMPLATES = {
     ];
     return pick(variants);
   },
+  free_limit_first_time_plus_interest: () => {
+  return `You've used today's 5 free parenting questions. 🌱
+
+*Rootie Plus is coming soon* and it will include:
+✨ Unlimited parenting questions
+🧠 More personalised guidance based on your child
+📈 Monthly growth reports
+🔍 Pattern detection across your child's moments
+
+I've marked that you're interested in *Rootie Plus* and I'll keep you posted when it launches. 💛
+
+Until then, you can still log *unlimited child moments* anytime — that's always free.`;
+},
+  free_limit_repeat_plus_interest: () => {
+  return `You've reached today's free question limit again. 🌱
+
+We've already noted that you're interested in *Rootie Plus*, and that'll be the best fit once it launches. 💛
+
+For now, come back tomorrow to ask more parenting questions.
+
+You can still log *unlimited child moments* anytime — that part stays free.`;
+},
 
   // ── Daily prompt (outbound) ──────────────────────────────────────────────────
   daily_prompt: (promptText) => {
