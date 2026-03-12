@@ -46,7 +46,7 @@ Also detect:
 - confidence_score: 0.0 to 1.0 — how confident you are in the classification
 - needs_full_ai: true ONLY if the message requires personalised parenting advice or emotional coaching. Set to false for moment logs, greetings, and simple responses.
 
-Respond ONLY with valid JSON. No explanation.`;
+The JSON object must use the exact key name "message_type" (not "type").`;
 
 async function classifyMessage(messageText, children = []) {
   try {
@@ -74,7 +74,7 @@ async function classifyMessage(messageText, children = []) {
 
     // Validate required fields
     return {
-      message_type:     parsed.message_type     || 'general',
+      message_type: parsed.message_type || parsed.type || 'general',
       child_name:       parsed.child_name        || null,
       log_moment:       parsed.log_moment        === true,
       moment_category:  parsed.moment_category   || null,
