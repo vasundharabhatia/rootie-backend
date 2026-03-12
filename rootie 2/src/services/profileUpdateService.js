@@ -10,17 +10,28 @@
  *   - Add a new child after onboarding
  *   - Reminder time
  *   - Timezone
+ *   - Archive/remove child
  *
- * Sessions are stored in Postgres via flowSessionService, so they survive
- * restarts and deploys.
+ * Read-only commands:
+ *   - show my profile
+ *   - show my family
+ *   - show my settings
  */
 
 const { updateUser } = require('./userService');
-const { createChild, getChildrenByUserId, updateChild } = require('./childService');
-const { setFlowSession, getFlowSession, clearFlowSession } = require('./flowSessionService');
+const {
+  createChild,
+  getChildrenByUserId,
+  updateChild,
+  archiveChild,
+} = require('./childService');
+const {
+  setFlowSession,
+  getFlowSession,
+  clearFlowSession,
+} = require('./flowSessionService');
 const { logger } = require('../utils/logger');
 
-// ─── Trigger detection ────────────────────────────────────────────────────────
 const TRIGGER_PHRASES = [
   'update profile',
   'edit profile',
@@ -46,9 +57,23 @@ const TRIGGER_PHRASES = [
   'timezone',
   'manage family',
   'edit family',
+  'remove child',
+  'archive child',
+  'delete child',
 ];
 
-// ─── Timezone aliases ─────────────────────────────────────────────────────────
+const VIEW_TRIGGERS = [
+  'show my profile',
+  'show profile',
+  'my profile',
+  'show my family',
+  'show family',
+  'my family',
+  'show my settings',
+  'show settings',
+  'my settings',
+];
+
 const TIMEZONE_ALIASES = {
   singapore: 'Asia/Singapore',
   sg: 'Asia/Singapore',
@@ -89,6 +114,11 @@ function isProfileUpdateTrigger(messageText) {
   return TRIGGER_PHRASES.some(phrase => lower.includes(phrase));
 }
 
+function isProfileViewTrigger(messageText) {
+  const lower = messageText.trim().toLowerCase();
+  return VIEW_TRIGGERS.some(phrase => lower.includes(phrase));
+}
+
 async function hasActiveSession(userId) {
   const session = await getFlowSession(userId);
   return !!session && session.flow_type === 'profile_update';
@@ -99,7 +129,7 @@ function parseHour(text) {
   if (/\b(morning|morn)\b/.test(t))   return 8;
   if (/\b(afternoon|noon)\b/.test(t)) return 12;
   if (/\b(evening|eve)\b/.test(t))    return 18;
-  if (/\bnight\b/.test(t))            return 20;
+  if (/\b(night)\b/.test(t))          return 20;
 
   const match = t.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/);
   if (!match) return null;
@@ -123,7 +153,7 @@ function formatHour(hour) {
 
 function resolveChildSelection(messageText, children) {
   const text = messageText.trim();
-  const idx  = parseInt(text, 10);
+  const idx = parseInt(text, 10);
 
   if (!Number.isNaN(idx) && idx >= 1 && idx <= children.length) {
     return children[idx - 1];
@@ -148,17 +178,12 @@ function resolveTimezone(text) {
   const raw = text.trim();
   const lower = raw.toLowerCase();
 
-  if (TIMEZONE_ALIASES[lower]) {
-    return TIMEZONE_ALIASES[lower];
-  }
+  if (TIMEZONE_ALIASES[lower]) return TIMEZONE_ALIASES[lower];
 
   for (const key of Object.keys(TIMEZONE_ALIASES)) {
-    if (lower.includes(key)) {
-      return TIMEZONE_ALIASES[key];
-    }
+    if (lower.includes(key)) return TIMEZONE_ALIASES[key];
   }
 
-  // Allow direct IANA-style input like Asia/Singapore
   if (/^[A-Za-z_]+\/[A-Za-z_]+(?:\/[A-Za-z_]+)?$/.test(raw)) {
     return raw;
   }
@@ -176,36 +201,85 @@ function buildMainMenu() {
     `• *4* — Add another child\n` +
     `• *5* — A child's age\n` +
     `• *6* — My timezone\n` +
+    `• *7* — Remove/archive a child\n` +
     `• *cancel* — Never mind`
   );
 }
 
+function buildChildrenList(children) {
+  return children.map((c, i) => `• *${i + 1}* — ${c.child_name}`).join('\n');
+}
+
+async function handleProfileView(user, messageText) {
+  const lower = messageText.trim().toLowerCase();
+  const activeChildren = await getChildrenByUserId(user.user_id);
+  const allChildren = await getChildrenByUserId(user.user_id, { includeArchived: true });
+  const archivedChildren = allChildren.filter(c => c.is_archived);
+
+  if (lower.includes('family')) {
+    if (!allChildren.length) {
+      return `I don't have any family details saved yet. 🌱`;
+    }
+
+    const activeSection = activeChildren.length
+      ? activeChildren.map(c => `• *${c.child_name}* — age ${c.child_age ?? '?'}`).join('\n')
+      : `• No active children saved`;
+
+    const archivedSection = archivedChildren.length
+      ? `\n\nArchived children:\n${archivedChildren.map(c => `• *${c.child_name}*`).join('\n')}`
+      : '';
+
+    return (
+      `Here’s your family snapshot 🌱\n\n` +
+      `Active children:\n${activeSection}` +
+      archivedSection
+    );
+  }
+
+  if (lower.includes('settings')) {
+    return (
+      `Here are your current settings ⚙️\n\n` +
+      `• Reminder time: *${formatHour(user.reminder_hour ?? 8)}*\n` +
+      `• Timezone: *${user.timezone || 'UTC'}*\n` +
+      `• Plan: *${user.plan_type || 'free'}*`
+    );
+  }
+
+  const childrenLine = activeChildren.length
+    ? activeChildren.map(c => `${c.child_name} (${c.child_age ?? '?'})`).join(', ')
+    : 'No active children saved yet';
+
+  return (
+    `Here’s your profile 💛\n\n` +
+    `• Name: *${user.parent_name || 'Not set'}*\n` +
+    `• Children: *${childrenLine}*\n` +
+    `• Reminder time: *${formatHour(user.reminder_hour ?? 8)}*\n` +
+    `• Timezone: *${user.timezone || 'UTC'}*`
+  );
+}
+
 async function handleProfileUpdate(user, messageText) {
-  const text   = messageText.trim();
+  const text = messageText.trim();
   const userId = user.user_id;
 
   let session = await getFlowSession(userId);
 
-  // ── No active session → start one ──────────────────────────────────────────
   if (!session) {
     await setFlowSession(userId, 'profile_update', 'choose_field', {});
     return buildMainMenu();
   }
 
-  // ── Cancel at any point ─────────────────────────────────────────────────────
   if (/^cancel$/i.test(text)) {
     await clearFlowSession(userId);
     return `No problem! Nothing was changed. 💛`;
   }
 
-  // Safety fallback if some other flow somehow exists
   if (session.flow_type !== 'profile_update') {
     await clearFlowSession(userId);
     await setFlowSession(userId, 'profile_update', 'choose_field', {});
     return buildMainMenu();
   }
 
-  // ── Step: choose_field ──────────────────────────────────────────────────────
   if (session.step === 'choose_field') {
     if (text === '1' || (/name/i.test(text) && !/child/i.test(text))) {
       await setFlowSession(userId, 'profile_update', 'enter_name', session.data || {});
@@ -217,7 +291,7 @@ async function handleProfileUpdate(user, messageText) {
 
       if (!children.length) {
         await clearFlowSession(userId);
-        return `I don't have any children on record for you yet. 🌱`;
+        return `I don't have any active children on record for you yet. 🌱`;
       }
 
       if (children.length === 1) {
@@ -228,9 +302,8 @@ async function handleProfileUpdate(user, messageText) {
         return `What would you like to rename *${children[0].child_name}* to?`;
       }
 
-      const list = children.map((c, i) => `• *${i + 1}* — ${c.child_name}`).join('\n');
       await setFlowSession(userId, 'profile_update', 'choose_child_for_rename', { children });
-      return `Which child would you like to rename?\n\n${list}`;
+      return `Which child would you like to rename?\n\n${buildChildrenList(children)}`;
     }
 
     if (text === '3' || /time|reminder/i.test(text)) {
@@ -251,7 +324,7 @@ async function handleProfileUpdate(user, messageText) {
 
       if (!children.length) {
         await clearFlowSession(userId);
-        return `I don't have any children on record for you yet. 🌱`;
+        return `I don't have any active children on record for you yet. 🌱`;
       }
 
       if (children.length === 1) {
@@ -262,9 +335,8 @@ async function handleProfileUpdate(user, messageText) {
         return `What is *${children[0].child_name}*'s correct age?`;
       }
 
-      const list = children.map((c, i) => `• *${i + 1}* — ${c.child_name}`).join('\n');
       await setFlowSession(userId, 'profile_update', 'choose_child_for_age', { children });
-      return `Which child's age would you like to update?\n\n${list}`;
+      return `Which child's age would you like to update?\n\n${buildChildrenList(children)}`;
     }
 
     if (text === '6' || /timezone/i.test(text)) {
@@ -280,10 +352,29 @@ async function handleProfileUpdate(user, messageText) {
       );
     }
 
+    if (text === '7' || /remove child|archive child|delete child/i.test(text)) {
+      const children = await getChildrenByUserId(userId);
+
+      if (!children.length) {
+        await clearFlowSession(userId);
+        return `I don't have any active children on record for you yet. 🌱`;
+      }
+
+      if (children.length === 1) {
+        await setFlowSession(userId, 'profile_update', 'confirm_archive_child', {
+          childId: children[0].child_id,
+          childName: children[0].child_name,
+        });
+        return `Are you sure you want to archive *${children[0].child_name}*? Reply *yes* to confirm or *cancel* to stop.`;
+      }
+
+      await setFlowSession(userId, 'profile_update', 'choose_child_for_archive', { children });
+      return `Which child would you like to archive?\n\n${buildChildrenList(children)}`;
+    }
+
     return buildMainMenu();
   }
 
-  // ── Step: enter_name ────────────────────────────────────────────────────────
   if (session.step === 'enter_name') {
     if (!text.length) {
       return `Please type your new name, or reply *cancel* to stop.`;
@@ -296,14 +387,12 @@ async function handleProfileUpdate(user, messageText) {
     return `Done! I'll call you *${text}* from now on. 💛`;
   }
 
-  // ── Step: choose_child_for_rename ───────────────────────────────────────────
   if (session.step === 'choose_child_for_rename') {
     const children = session.data.children || [];
     const selected = resolveChildSelection(text, children);
 
     if (!selected) {
-      const list = children.map((c, i) => `• *${i + 1}* — ${c.child_name}`).join('\n');
-      return `Please reply with a number or name from the list, or reply *cancel*.\n\n${list}`;
+      return `Please reply with a number or name from the list, or reply *cancel*.\n\n${buildChildrenList(children)}`;
     }
 
     await setFlowSession(userId, 'profile_update', 'enter_child_name', {
@@ -314,7 +403,6 @@ async function handleProfileUpdate(user, messageText) {
     return `What would you like to rename *${selected.child_name}* to?`;
   }
 
-  // ── Step: enter_child_name ──────────────────────────────────────────────────
   if (session.step === 'enter_child_name') {
     if (!text.length) {
       return `Please type the new name, or reply *cancel* to stop.`;
@@ -334,7 +422,6 @@ async function handleProfileUpdate(user, messageText) {
     return `Done! I've updated *${oldName}*'s name to *${text}*. 🌱`;
   }
 
-  // ── Step: enter_time ────────────────────────────────────────────────────────
   if (session.step === 'enter_time') {
     const hour = parseHour(text);
 
@@ -353,7 +440,6 @@ async function handleProfileUpdate(user, messageText) {
     return `Done! I'll send your prompts at *${formatHour(hour)}* your time from now on. 💛`;
   }
 
-  // ── Step: enter_new_child_name ──────────────────────────────────────────────
   if (session.step === 'enter_new_child_name') {
     if (!text.length) {
       return `Please type your child's name, or reply *cancel* to stop.`;
@@ -366,7 +452,6 @@ async function handleProfileUpdate(user, messageText) {
     return `How old is *${text}*?`;
   }
 
-  // ── Step: enter_new_child_age ───────────────────────────────────────────────
   if (session.step === 'enter_new_child_age') {
     const childAge = parseChildAge(text);
 
@@ -392,14 +477,12 @@ async function handleProfileUpdate(user, messageText) {
     return `Done! I've added *${childName}* (${childAge}) to your family. 🌱`;
   }
 
-  // ── Step: choose_child_for_age ──────────────────────────────────────────────
   if (session.step === 'choose_child_for_age') {
     const children = session.data.children || [];
     const selected = resolveChildSelection(text, children);
 
     if (!selected) {
-      const list = children.map((c, i) => `• *${i + 1}* — ${c.child_name}`).join('\n');
-      return `Please reply with a number or name from the list, or reply *cancel*.\n\n${list}`;
+      return `Please reply with a number or name from the list, or reply *cancel*.\n\n${buildChildrenList(children)}`;
     }
 
     await setFlowSession(userId, 'profile_update', 'enter_child_age', {
@@ -410,7 +493,6 @@ async function handleProfileUpdate(user, messageText) {
     return `What is *${selected.child_name}*'s correct age?`;
   }
 
-  // ── Step: enter_child_age ───────────────────────────────────────────────────
   if (session.step === 'enter_child_age') {
     const age = parseChildAge(text);
 
@@ -433,7 +515,6 @@ async function handleProfileUpdate(user, messageText) {
     return `Done! I've updated *${childName}*'s age to *${age}*. 🌱`;
   }
 
-  // ── Step: enter_timezone ────────────────────────────────────────────────────
   if (session.step === 'enter_timezone') {
     const timezone = resolveTimezone(text);
 
@@ -452,7 +533,42 @@ async function handleProfileUpdate(user, messageText) {
     return `Done! I'll now use *${timezone}* for your reminders and scheduled messages. 💛`;
   }
 
-  // ── Fallback ────────────────────────────────────────────────────────────────
+  if (session.step === 'choose_child_for_archive') {
+    const children = session.data.children || [];
+    const selected = resolveChildSelection(text, children);
+
+    if (!selected) {
+      return `Please reply with a number or name from the list, or reply *cancel*.\n\n${buildChildrenList(children)}`;
+    }
+
+    await setFlowSession(userId, 'profile_update', 'confirm_archive_child', {
+      childId: selected.child_id,
+      childName: selected.child_name,
+    });
+
+    return `Are you sure you want to archive *${selected.child_name}*? Reply *yes* to confirm or *cancel* to stop.`;
+  }
+
+  if (session.step === 'confirm_archive_child') {
+    const answer = text.toLowerCase();
+
+    if (!['yes', 'y'].includes(answer)) {
+      return `Please reply *yes* to confirm, or *cancel* to stop.`;
+    }
+
+    const childName = session.data.childName || 'your child';
+    await archiveChild(session.data.childId);
+    await clearFlowSession(userId);
+
+    logger.info('Profile update: child archived', {
+      userId,
+      childId: session.data.childId,
+      childName,
+    });
+
+    return `Done. I've archived *${childName}* from your active family profile. 🌱`;
+  }
+
   await clearFlowSession(userId);
   return `Let's try that again. 🌱\n\n${buildMainMenu()}`;
 }
@@ -460,5 +576,7 @@ async function handleProfileUpdate(user, messageText) {
 module.exports = {
   handleProfileUpdate,
   isProfileUpdateTrigger,
+  isProfileViewTrigger,
+  handleProfileView,
   hasActiveSession,
 };
