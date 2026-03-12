@@ -164,6 +164,23 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS rootie_plus_interest_at TIMESTAMPTZ;
     ON pending_parent_actions (user_id);
   CREATE INDEX IF NOT EXISTS idx_pending_parent_actions_expires_at
     ON pending_parent_actions (expires_at);
+      -- ── User Flow Sessions ────────────────────────────────────────────────────
+  -- DB-backed conversational sessions so profile / family edit flows survive
+  -- restarts, deploys, and temporary crashes.
+  CREATE TABLE IF NOT EXISTS user_flow_sessions (
+    session_id    SERIAL PRIMARY KEY,
+    user_id       INTEGER      UNIQUE NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    flow_type     VARCHAR(50)  NOT NULL,
+    step          VARCHAR(50)  NOT NULL,
+    data          JSONB        NOT NULL DEFAULT '{}'::jsonb,
+    created_at    TIMESTAMPTZ  DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ  DEFAULT NOW(),
+    expires_at    TIMESTAMPTZ  NOT NULL DEFAULT (NOW() + interval '24 hours')
+  );
+  CREATE INDEX IF NOT EXISTS idx_user_flow_sessions_user_id
+    ON user_flow_sessions (user_id);
+  CREATE INDEX IF NOT EXISTS idx_user_flow_sessions_expires_at
+    ON user_flow_sessions (expires_at);
 `;
 
 
