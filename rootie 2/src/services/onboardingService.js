@@ -88,15 +88,36 @@ async function handleOnboarding(user, messageText, displayName) {
     case 0: {
       await updateUser(user.whatsapp_number, { onboarding_step: 1 });
 
-      // If user just said "hi" or "hello", give the full intro.
-      // But if they started with a real question or moment, skip the intro
-      // and make it feel like a direct reply.
-      const isJustGreeting = /^(hi|hello|hey|yo)$/i.test(text.trim());
-      const intro = isJustGreeting
-        ? `Hi there! I'm Rootie. 🌱 A calm little space for parents to notice the good things and get a bit of support.\n\n`
-        : `Hello! I can help with that. But first, `;
+      const introVariants = [
+        // Variant 1 — provided by Kind Roots team (original)
+        `Hello! I'm Rootie 🌱\n` +
+        `Your everyday parenting companion from Kind Roots.\n\n` +
+        `Think of me as a small pocket guide for raising kind, confident, emotionally resilient children. ` +
+        `I'm here to support you through everyday parenting moments — helping with big feelings, building connection, ` +
+        `and noticing the good that's already happening in your child's world.\n\n` +
+        `Whenever you need a quick idea, activity, or bit of reassurance, I'm right here.\n\n` +
+        `First, let's get to know each other.\nWhat's your name? 😊`,
 
-      return `${intro}what's your name? 😊`;
+        // Variant 2 — warm and grounded
+        `Hi there! I'm Rootie 🌱\n` +
+        `A parenting companion from the Kind Roots team.\n\n` +
+        `I'm here for the everyday stuff — the big feelings, the small wins, the moments you want to remember, ` +
+        `and the ones you're not quite sure how to handle. Whether you need a quick idea, a gentle activity, ` +
+        `or just a bit of reassurance, I'm always here.\n\n` +
+        `My whole focus is helping you raise a kind, confident, emotionally resilient child — one small moment at a time.\n\n` +
+        `Let's start by getting to know each other.\nWhat's your name? 😊`,
+
+        // Variant 3 — slightly more personal and conversational
+        `Hello! I'm Rootie 🌱\n` +
+        `Your everyday parenting companion, from Kind Roots.\n\n` +
+        `Parenting is full of moments — some beautiful, some hard, most somewhere in between. ` +
+        `I'm here to help you navigate all of it: noticing the good, handling the tricky, ` +
+        `and building the kind of connection that stays with your child for life.\n\n` +
+        `Think of me as a calm, always-available pocket guide for raising kind, confident, emotionally resilient kids.\n\n` +
+        `First things first — what's your name? 😊`,
+      ];
+
+      return introVariants[Math.floor(Math.random() * introVariants.length)];
     }
 
     // ── Step 1: Save parent name + ask for child name ────────────────────
