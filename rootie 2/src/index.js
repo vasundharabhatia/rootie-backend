@@ -38,7 +38,7 @@
  */
 
 const cron       = require('node-cron');
-const { logger } = require('../utils/logger');
+const { logger } = require('./utils/logger');
 const { getOnboardedUsers } = require('../services/userService');
 const { sendMessage }       = require('../services/whatsappService');
 const { saveMessage }       = require('../services/conversationService');
