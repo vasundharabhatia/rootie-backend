@@ -4,8 +4,8 @@
  * Handles the full lifecycle of the weekend activity feature:
  *   1. Records when an activity is sent to a user.
  *   2. Finds users who need a follow-up message on Monday morning.
- *   3. Processes user replies to the follow-up, marks activities as complete.
- *   4. Increments the user's completion counter.
+ *   3. Processes user replies to the follow-up, marks activities as complete or skipped.
+ *   4. Increments the user's completion counter only when completed = true.
  *   5. Checks for and grants creative "Connection Awards" at milestones.
  */
 
@@ -14,10 +14,10 @@ const { logger } = require("../utils/logger");
 
 // --- Award Milestone Definitions ---
 const AWARD_MILESTONES = {
-  3:  { name: "The Spark Starter",    template: "award_milestone_3" },
-  6:  { name: "The Bridge Builder",   template: "award_milestone_6" },
-  9:  { name: "The Heart Weaver",     template: "award_milestone_9" },
-  12: { name: "The Memory Maker",     template: "award_milestone_12" },
+  3:  { name: "The Spark Starter", template: "award_milestone_3" },
+  6:  { name: "The Bridge Builder", template: "award_milestone_6" },
+  9:  { name: "The Heart Weaver", template: "award_milestone_9" },
+  12: { name: "The Memory Maker", template: "award_milestone_12" },
   15: { name: "The Connection Captain", template: "award_milestone_15" },
 };
 
@@ -44,8 +44,8 @@ async function getUsersForMondayFollowup() {
     SELECT u.user_id, u.whatsapp_number, wa.activity_id
     FROM users u
     JOIN weekend_activities wa ON u.user_id = wa.user_id
-    WHERE wa.sent_at >= date_trunc('week', current_date) - interval '2 days' -- Previous Friday
-      AND wa.sent_at < date_trunc('week', current_date) + interval '1 day'  -- This Monday
+    WHERE wa.sent_at >= date_trunc('week', current_date) - interval '2 days'
+      AND wa.sent_at < date_trunc('week', current_date) + interval '1 day'
       AND wa.followup_sent_at IS NULL
       AND u.onboarding_complete = true
   `);
@@ -64,34 +64,56 @@ async function markFollowupSent(activityId) {
 }
 
 /**
- * Handles a user's confirmation that they completed a weekend activity.
- * Increments counters and checks for awards.
+ * Handles a user's confirmation that they completed OR skipped a weekend activity.
+ *
  * @param {number} userId
+ * @param {boolean} activityDone
  * @returns {Promise<{reply_template: string, award_name: string|null}>}
  */
-async function handleActivityCompletion(userId) {
-  // Find the most recent activity for this user that is not yet completed.
+async function handleActivityCompletion(userId, activityDone) {
+  // Find the most recent activity for this user that has not yet been resolved.
   const activityRes = await query(
-    `SELECT activity_id FROM weekend_activities
-     WHERE user_id = $1 AND completed = false
-     ORDER BY sent_at DESC LIMIT 1`,
+    `SELECT activity_id
+     FROM weekend_activities
+     WHERE user_id = $1
+       AND completed = false
+       AND completed_at IS NULL
+     ORDER BY sent_at DESC
+     LIMIT 1`,
     [userId]
   );
 
   if (activityRes.rows.length === 0) {
-    logger.warn("Activity completion received but no pending activity found", { userId });
-    return { reply_template: 'general_returning_user', award_name: null }; // Fallback
+    logger.warn("Activity reply received but no pending activity found", { userId, activityDone });
+    return { reply_template: 'general_returning_user', award_name: null };
   }
 
   const { activity_id } = activityRes.rows[0];
 
-  // Mark the activity as completed in the weekend_activities table.
+  // Parent said NO / didn't do it
+  if (activityDone === false) {
+    await query(
+      `UPDATE weekend_activities
+       SET completed = false,
+           completed_at = NOW()
+       WHERE activity_id = $1`,
+      [activity_id]
+    );
+
+    logger.info("Weekend activity marked as skipped", { userId, activity_id });
+
+    return { reply_template: 'weekend_activity_skipped', award_name: null };
+  }
+
+  // Parent said YES / did it
   await query(
-    `UPDATE weekend_activities SET completed = true, completed_at = NOW() WHERE activity_id = $1`,
+    `UPDATE weekend_activities
+     SET completed = true,
+         completed_at = NOW()
+     WHERE activity_id = $1`,
     [activity_id]
   );
 
-  // Increment the user's total completion count and get the new total.
   const userRes = await query(
     `UPDATE users
      SET activities_completed = activities_completed + 1
@@ -101,21 +123,29 @@ async function handleActivityCompletion(userId) {
   );
 
   const { activities_completed, last_award_milestone } = userRes.rows[0];
-  logger.info("Weekend activity marked as complete", { userId, total_completed: activities_completed });
 
-  // Check if this completion triggers a new award milestone.
+  logger.info("Weekend activity marked as complete", {
+    userId,
+    activity_id,
+    total_completed: activities_completed,
+  });
+
   const award = AWARD_MILESTONES[activities_completed];
   if (award && activities_completed > last_award_milestone) {
-    // It's a new milestone! Grant the award.
     await query(
       `UPDATE users SET last_award_milestone = $1 WHERE user_id = $2`,
       [activities_completed, userId]
     );
-    logger.info("Connection Award granted!", { userId, milestone: activities_completed, award: award.name });
+
+    logger.info("Connection Award granted!", {
+      userId,
+      milestone: activities_completed,
+      award: award.name,
+    });
+
     return { reply_template: award.template, award_name: award.name };
   }
 
-  // No award this time, just a simple confirmation.
   return { reply_template: 'weekend_activity_confirmed', award_name: null };
 }
 
