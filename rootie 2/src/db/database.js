@@ -35,10 +35,18 @@ const SCHEMA = `
     onboarding_complete BOOLEAN     DEFAULT false,
     onboarding_step    SMALLINT     DEFAULT 0,
     last_active_date   DATE,                          -- updated on every inbound message
+    timezone           VARCHAR(50)  DEFAULT 'UTC',    -- IANA timezone, e.g. 'Asia/Kolkata'
+    reminder_hour      SMALLINT     DEFAULT 8         -- preferred local hour to receive messages (0–23)
+                         CHECK (reminder_hour >= 0 AND reminder_hour <= 23),
     created_at         TIMESTAMPTZ  DEFAULT NOW(),
     updated_at         TIMESTAMPTZ  DEFAULT NOW()
   );
   CREATE INDEX IF NOT EXISTS idx_users_whatsapp ON users (whatsapp_number);
+
+  -- ── Migrate existing tables: add new columns if they don't exist ────────────
+  -- Safe to run on every startup — ALTER TABLE IF NOT EXISTS column is idempotent.
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS timezone      VARCHAR(50)  DEFAULT 'UTC';
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS reminder_hour SMALLINT     DEFAULT 8;
 
   -- ── Children ────────────────────────────────────────────────────────────────
   -- Multiple children per parent. These fields form the Child Personality Blueprint
