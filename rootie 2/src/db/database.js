@@ -147,7 +147,25 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS rootie_plus_interest_at TIMESTAMPTZ;
   -- ── Migrate: add activity tracking columns to users for quick award lookups ──
   ALTER TABLE users ADD COLUMN IF NOT EXISTS activities_completed  SMALLINT DEFAULT 0;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS last_award_milestone  SMALLINT DEFAULT 0;
+
+   -- ── Pending Parent Actions ────────────────────────────────────────────────
+  -- Stores short-lived conversational state that must survive restarts.
+  -- Example: Rootie asked "Which child was this about?" and is waiting for
+  -- the parent to reply with a child name/number.
+  CREATE TABLE IF NOT EXISTS pending_parent_actions (
+    action_id     SERIAL PRIMARY KEY,
+    user_id       INTEGER      UNIQUE NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    action_type   VARCHAR(50)  NOT NULL,
+    payload       JSONB        NOT NULL DEFAULT '{}'::jsonb,
+    created_at    TIMESTAMPTZ  DEFAULT NOW(),
+    expires_at    TIMESTAMPTZ  NOT NULL DEFAULT (NOW() + interval '30 minutes')
+  );
+  CREATE INDEX IF NOT EXISTS idx_pending_parent_actions_user_id
+    ON pending_parent_actions (user_id);
+  CREATE INDEX IF NOT EXISTS idx_pending_parent_actions_expires_at
+    ON pending_parent_actions (expires_at);
 `;
+
 
 async function initDatabase() {
   const client = await pool.connect();
