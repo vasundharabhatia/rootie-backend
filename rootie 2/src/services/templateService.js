@@ -265,6 +265,11 @@ function getTemplateResponse(type, data = {}) {
 
     case 'free_limit_reached':
       return TEMPLATES.free_limit_reached();
+      case 'free_limit_first_time_plus_interest':
+  return TEMPLATES.free_limit_first_time_plus_interest();
+
+case 'free_limit_repeat_plus_interest':
+  return TEMPLATES.free_limit_repeat_plus_interest();
 
     case 'daily_prompt':
       return TEMPLATES.daily_prompt(
