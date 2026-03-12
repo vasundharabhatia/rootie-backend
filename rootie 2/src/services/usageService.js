@@ -34,11 +34,19 @@ async function getTodayUsage(userId) {
 
 // ─── Check if a free-plan user can ask a parenting question ──────────────
 async function canAskQuestion(user) {
-  if (user.plan_type === 'paid') return { allowed: true };
+if (user.plan_type === 'paid') return { allowed: true };
+
   const usage = await getTodayUsage(user.user_id);
+
   if (usage.questions_used >= FREE_QUESTION_LIMIT) {
-    return { allowed: false };
+    return {
+      allowed: false,
+      alreadyInterestedInPlus: !!user.rootie_plus_interested,
+      hitLimitCountToday: usage.hit_limit_count || 0,
+      firstTimeBlocked: (usage.hit_limit_count || 0) === 0 && !user.rootie_plus_interested,
+    };
   }
+
   return { allowed: true };
 }
 
