@@ -36,6 +36,7 @@ Classify the parent's message into one of these types:
 - parenting_question: parent is asking for parenting advice or guidance
 - daily_prompt_response: parent is responding to today's daily prompt
 - bonding_activity_response: parent is responding to a weekly bonding activity
+- weekend_activity_completion: parent is confirming they completed or did not complete a weekend activity (e.g. "yes", "we did it", "no", "didn't get to it")
 - general: a greeting, thank you, or general chat
 - child_selection_needed: message mentions a child behavior but it's unclear which child (only when parent has multiple children and child name is not mentioned)
 
@@ -46,7 +47,9 @@ Also detect:
 - confidence_score: 0.0 to 1.0 — how confident you are in the classification
 - needs_full_ai: true ONLY if the message requires personalised parenting advice or emotional coaching. Set to false for moment logs, greetings, and simple responses.
 
-The JSON object must use the exact key name "message_type" (not "type").`;
+The JSON object must use the exact key name "message_type" (not "type").
+
+For weekend_activity_completion, also include a boolean field "activity_done" — true if the parent says yes/did it, false if they say no/didn't.`;
 
 async function classifyMessage(messageText, children = []) {
   try {
@@ -74,12 +77,13 @@ async function classifyMessage(messageText, children = []) {
 
     // Validate required fields
     return {
-      message_type: parsed.message_type || parsed.type || 'general',
-      child_name:       parsed.child_name        || null,
-      log_moment:       parsed.log_moment        === true,
-      moment_category:  parsed.moment_category   || null,
-      confidence_score: parsed.confidence_score  || 0.5,
-      needs_full_ai:    parsed.needs_full_ai     === true,
+      message_type:    parsed.message_type    || parsed.type || 'general',
+      child_name:      parsed.child_name      || null,
+      log_moment:      parsed.log_moment      === true,
+      moment_category: parsed.moment_category || null,
+      confidence_score: parsed.confidence_score || 0.5,
+      needs_full_ai:   parsed.needs_full_ai   === true,
+      activity_done:   parsed.activity_done   === true,
     };
 
   } catch (err) {
