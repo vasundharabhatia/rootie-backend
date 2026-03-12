@@ -11,6 +11,12 @@
  *   - Reminder time
  *   - Timezone
  *   - Archive/remove child
+ *   - Child traits:
+ *       temperament
+ *       sensitivity level
+ *       social style
+ *       strengths
+ *       challenges
  *
  * Read-only commands:
  *   - show my profile
@@ -24,6 +30,8 @@ const {
   getChildrenByUserId,
   updateChild,
   archiveChild,
+  renameChild,
+  findPotentialDuplicateChild,
 } = require('./childService');
 const {
   setFlowSession,
@@ -60,6 +68,14 @@ const TRIGGER_PHRASES = [
   'remove child',
   'archive child',
   'delete child',
+  'edit child traits',
+  'update child traits',
+  'child traits',
+  'temperament',
+  'sensitivity',
+  'social style',
+  'strengths',
+  'challenges',
 ];
 
 const VIEW_TRIGGERS = [
@@ -78,33 +94,26 @@ const TIMEZONE_ALIASES = {
   singapore: 'Asia/Singapore',
   sg: 'Asia/Singapore',
   sgt: 'Asia/Singapore',
-
   india: 'Asia/Kolkata',
   kolkata: 'Asia/Kolkata',
   mumbai: 'Asia/Kolkata',
   delhi: 'Asia/Kolkata',
   ist: 'Asia/Kolkata',
-
   dubai: 'Asia/Dubai',
   uae: 'Asia/Dubai',
-
   london: 'Europe/London',
   uk: 'Europe/London',
   britain: 'Europe/London',
   bst: 'Europe/London',
   gmt: 'Europe/London',
-
   sydney: 'Australia/Sydney',
   australia: 'Australia/Sydney',
-
   'new york': 'America/New_York',
   nyc: 'America/New_York',
   est: 'America/New_York',
-
   california: 'America/Los_Angeles',
   la: 'America/Los_Angeles',
   pst: 'America/Los_Angeles',
-
   toronto: 'America/Toronto',
   canada: 'America/Toronto',
 };
@@ -126,10 +135,10 @@ async function hasActiveSession(userId) {
 
 function parseHour(text) {
   const t = text.trim().toLowerCase();
-  if (/\b(morning|morn)\b/.test(t))   return 8;
+  if (/\b(morning|morn)\b/.test(t)) return 8;
   if (/\b(afternoon|noon)\b/.test(t)) return 12;
-  if (/\b(evening|eve)\b/.test(t))    return 18;
-  if (/\b(night)\b/.test(t))          return 20;
+  if (/\b(evening|eve)\b/.test(t)) return 18;
+  if (/\b(night)\b/.test(t)) return 20;
 
   const match = t.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/);
   if (!match) return null;
@@ -202,12 +211,36 @@ function buildMainMenu() {
     `• *5* — A child's age\n` +
     `• *6* — My timezone\n` +
     `• *7* — Remove/archive a child\n` +
+    `• *8* — Edit a child's traits\n` +
     `• *cancel* — Never mind`
   );
 }
 
 function buildChildrenList(children) {
   return children.map((c, i) => `• *${i + 1}* — ${c.child_name}`).join('\n');
+}
+
+function buildTraitsMenu(childName) {
+  return (
+    `What would you like to update for *${childName}*? 🌱\n\n` +
+    `Reply with:\n` +
+    `• *1* — Temperament\n` +
+    `• *2* — Sensitivity level\n` +
+    `• *3* — Social style\n` +
+    `• *4* — Strengths\n` +
+    `• *5* — Challenges\n` +
+    `• *cancel* — Stop`
+  );
+}
+
+function buildChildTraitSummary(child) {
+  return (
+    `• Temperament: *${child.temperament || 'Not set'}*\n` +
+    `• Sensitivity level: *${child.sensitivity_level || 'Not set'}*\n` +
+    `• Social style: *${child.social_style || 'Not set'}*\n` +
+    `• Strengths: *${child.strengths || 'Not set'}*\n` +
+    `• Challenges: *${child.challenges || 'Not set'}*`
+  );
 }
 
 async function handleProfileView(user, messageText) {
@@ -308,10 +341,7 @@ async function handleProfileUpdate(user, messageText) {
 
     if (text === '3' || /time|reminder/i.test(text)) {
       await setFlowSession(userId, 'profile_update', 'enter_time', session.data || {});
-      return (
-        `What time would you like to receive your prompts and activities?\n\n` +
-        `Reply with something like *8am*, *7:30am*, or *evening*.`
-      );
+      return `What time would you like to receive your prompts and activities?\n\nReply with something like *8am*, *7:30am*, or *evening*.`;
     }
 
     if (text === '4' || /add another child|add child|new child/i.test(text)) {
@@ -372,6 +402,33 @@ async function handleProfileUpdate(user, messageText) {
       return `Which child would you like to archive?\n\n${buildChildrenList(children)}`;
     }
 
+    if (
+      text === '8' ||
+      /edit child traits|update child traits|child traits|temperament|sensitivity|social style|strengths|challenges/i.test(text)
+    ) {
+      const children = await getChildrenByUserId(userId);
+
+      if (!children.length) {
+        await clearFlowSession(userId);
+        return `I don't have any active children on record for you yet. 🌱`;
+      }
+
+      if (children.length === 1) {
+        await setFlowSession(userId, 'profile_update', 'choose_trait_field', {
+          childId: children[0].child_id,
+          childName: children[0].child_name,
+        });
+        return (
+          `Here are the current traits for *${children[0].child_name}*:\n\n` +
+          `${buildChildTraitSummary(children[0])}\n\n` +
+          buildTraitsMenu(children[0].child_name)
+        );
+      }
+
+      await setFlowSession(userId, 'profile_update', 'choose_child_for_traits', { children });
+      return `Which child's traits would you like to update?\n\n${buildChildrenList(children)}`;
+    }
+
     return buildMainMenu();
   }
 
@@ -408,9 +465,16 @@ async function handleProfileUpdate(user, messageText) {
       return `Please type the new name, or reply *cancel* to stop.`;
     }
 
-    await updateChild(session.data.childId, { child_name: text });
-    const oldName = session.data.oldChildName || 'your child';
+    try {
+      await renameChild(userId, session.data.childId, text);
+    } catch (error) {
+      if (error.code === 'DUPLICATE_CHILD') {
+        return `It looks like *${error.child.child_name}* is already in your family profile. 🌱\n\nPlease choose a different name, or reply *cancel*.`;
+      }
+      throw error;
+    }
 
+    const oldName = session.data.oldChildName || 'your child';
     await clearFlowSession(userId);
 
     logger.info('Profile update: child name changed', {
@@ -419,24 +483,20 @@ async function handleProfileUpdate(user, messageText) {
       newName: text,
     });
 
-    return `Done! I've updated *${oldName}*'s name to *${text}*. 🌱`;
+    return `Done! I've updated *${oldName}*'s name to *${text.trim()}*. 🌱`;
   }
 
   if (session.step === 'enter_time') {
     const hour = parseHour(text);
 
     if (hour === null) {
-      return (
-        `I didn't quite catch that 😊\n\n` +
-        `Please reply with a time like *8am*, *7:30am*, *9*, or *evening*.`
-      );
+      return `I didn't quite catch that 😊\n\nPlease reply with a time like *8am*, *7:30am*, *9*, or *evening*.`;
     }
 
     await updateUser(user.whatsapp_number, { reminder_hour: hour });
     await clearFlowSession(userId);
 
     logger.info('Profile update: reminder hour changed', { userId, hour });
-
     return `Done! I'll send your prompts at *${formatHour(hour)}* your time from now on. 💛`;
   }
 
@@ -445,11 +505,16 @@ async function handleProfileUpdate(user, messageText) {
       return `Please type your child's name, or reply *cancel* to stop.`;
     }
 
+    const duplicate = await findPotentialDuplicateChild(userId, text);
+    if (duplicate) {
+      return `It looks like *${duplicate.child_name}* is already in your family profile. 🌱\n\nPlease enter a different child's name, or reply *cancel*.`;
+    }
+
     await setFlowSession(userId, 'profile_update', 'enter_new_child_age', {
-      childName: text,
+      childName: text.trim(),
     });
 
-    return `How old is *${text}*?`;
+    return `How old is *${text.trim()}*?`;
   }
 
   if (session.step === 'enter_new_child_age') {
@@ -461,10 +526,18 @@ async function handleProfileUpdate(user, messageText) {
 
     const childName = session.data.childName || 'your child';
 
-    await createChild(userId, {
-      childName,
-      childAge,
-    });
+    try {
+      await createChild(userId, {
+        childName,
+        childAge,
+      });
+    } catch (error) {
+      if (error.code === 'DUPLICATE_CHILD') {
+        await setFlowSession(userId, 'profile_update', 'enter_new_child_name', {});
+        return `It looks like *${error.child.child_name}* is already in your family profile. 🌱\n\nLet's try again — what is your child's name?`;
+      }
+      throw error;
+    }
 
     await clearFlowSession(userId);
 
@@ -519,17 +592,13 @@ async function handleProfileUpdate(user, messageText) {
     const timezone = resolveTimezone(text);
 
     if (!timezone) {
-      return (
-        `I couldn't match that timezone yet 🌍\n\n` +
-        `Please try something like *Singapore*, *India*, *Dubai*, *London*, or *Asia/Singapore*.`
-      );
+      return `I couldn't match that timezone yet 🌍\n\nPlease try something like *Singapore*, *India*, *Dubai*, *London*, or *Asia/Singapore*.`;
     }
 
     await updateUser(user.whatsapp_number, { timezone });
     await clearFlowSession(userId);
 
     logger.info('Profile update: timezone changed', { userId, timezone });
-
     return `Done! I'll now use *${timezone}* for your reminders and scheduled messages. 💛`;
   }
 
@@ -567,6 +636,102 @@ async function handleProfileUpdate(user, messageText) {
     });
 
     return `Done. I've archived *${childName}* from your active family profile. 🌱`;
+  }
+
+  if (session.step === 'choose_child_for_traits') {
+    const children = session.data.children || [];
+    const selected = resolveChildSelection(text, children);
+
+    if (!selected) {
+      return `Please reply with a number or name from the list, or reply *cancel*.\n\n${buildChildrenList(children)}`;
+    }
+
+    await setFlowSession(userId, 'profile_update', 'choose_trait_field', {
+      childId: selected.child_id,
+      childName: selected.child_name,
+    });
+
+    return (
+      `Here are the current traits for *${selected.child_name}*:\n\n` +
+      `${buildChildTraitSummary(selected)}\n\n` +
+      buildTraitsMenu(selected.child_name)
+    );
+  }
+
+  if (session.step === 'choose_trait_field') {
+    const childName = session.data.childName || 'your child';
+
+    if (text === '1' || /temperament/i.test(text)) {
+      await setFlowSession(userId, 'profile_update', 'enter_trait_value', {
+        ...session.data,
+        traitField: 'temperament',
+        traitLabel: 'temperament',
+      });
+      return `What temperament would you like me to save for *${childName}*?\n\nExamples: *easy-going*, *spirited*, *slow-to-warm*`;
+    }
+
+    if (text === '2' || /sensitivity/i.test(text)) {
+      await setFlowSession(userId, 'profile_update', 'enter_trait_value', {
+        ...session.data,
+        traitField: 'sensitivity_level',
+        traitLabel: 'sensitivity level',
+      });
+      return `What sensitivity level should I save for *${childName}*?\n\nExamples: *high*, *medium*, *low*`;
+    }
+
+    if (text === '3' || /social style/i.test(text)) {
+      await setFlowSession(userId, 'profile_update', 'enter_trait_value', {
+        ...session.data,
+        traitField: 'social_style',
+        traitLabel: 'social style',
+      });
+      return `What social style should I save for *${childName}*?\n\nExamples: *introverted*, *extroverted*, *slow to warm up*`;
+    }
+
+    if (text === '4' || /strengths/i.test(text)) {
+      await setFlowSession(userId, 'profile_update', 'enter_trait_value', {
+        ...session.data,
+        traitField: 'strengths',
+        traitLabel: 'strengths',
+      });
+      return `What strengths would you like me to save for *${childName}*?\n\nYou can reply in a short phrase like *curious, gentle, creative*.`;
+    }
+
+    if (text === '5' || /challenges/i.test(text)) {
+      await setFlowSession(userId, 'profile_update', 'enter_trait_value', {
+        ...session.data,
+        traitField: 'challenges',
+        traitLabel: 'challenges',
+      });
+      return `What challenges would you like me to save for *${childName}*?\n\nYou can reply in a short phrase like *transitions, frustration, loud spaces*.`;
+    }
+
+    return buildTraitsMenu(childName);
+  }
+
+  if (session.step === 'enter_trait_value') {
+    if (!text.length) {
+      return `Please type the new value, or reply *cancel* to stop.`;
+    }
+
+    const traitField = session.data.traitField;
+    const traitLabel = session.data.traitLabel || 'trait';
+    const childName = session.data.childName || 'your child';
+
+    await updateChild(session.data.childId, {
+      [traitField]: text.trim(),
+    });
+
+    await clearFlowSession(userId);
+
+    logger.info('Profile update: child trait changed', {
+      userId,
+      childId: session.data.childId,
+      traitField,
+      value: text.trim(),
+    });
+
+    return `Done! I've updated *${childName}*'s ${traitLabel} to *${text.trim()}*. 🌱`;
   }
 
   await clearFlowSession(userId);
