@@ -89,13 +89,14 @@ async function classifyMessage(messageText, children = []) {
   } catch (err) {
     logger.error('Classifier failed', { error: err.message });
     // Safe fallback — treat as general, let full AI handle it
-    return {
+      return {
       message_type:     'general',
       child_name:       null,
       log_moment:       false,
       moment_category:  null,
       confidence_score: 0,
       needs_full_ai:    true,
+      activity_done:    false,
     };
   }
 }
