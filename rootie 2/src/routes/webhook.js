@@ -24,6 +24,28 @@
  *          - parenting_question      → check plan limit → Step 2 AI
  *          - general / other         → Step 2 AI (if needed) or template
  *   8.  Save conversation, update usage
+ *
+ * ── TIMEZONE / SCHEDULE BUG FIX ──────────────────────────────────────────────
+ *
+ * ROOT CAUSE: When a user taps a WhatsApp quick-reply button (e.g. "Yes"/"No"
+ * at onboarding step 4, or any button in the profile-update flow), Meta sends
+ * the message with type = 'interactive', not 'text'. The previous guard:
+ *
+ *   if (messageType !== 'text' || !messageText) { ... return; }
+ *
+ * evaluated to TRUE for interactive messages and immediately returned a
+ * "non-text" reply, silently dropping the user's intent. This meant:
+ *
+ *   • Onboarding step 4 ("Yes/No — add another child?") was never processed
+ *     when the user tapped a button, leaving them stuck at step 4 forever.
+ *   • Onboarding step 5 (reminder time) was unreachable via button tap.
+ *   • The profile-update "change reminder time" flow was broken for button users.
+ *   • timezone and reminder_hour were therefore never saved for these users.
+ *
+ * FIX: Normalise interactive messages to 'text' BEFORE the non-text guard,
+ * whenever the parsed messageText is non-empty. This allows button replies to
+ * flow through the full routing pipeline exactly like typed text messages.
+ * Messages of type 'interactive' with no extractable text are still rejected.
  */
 
 const express = require('express');
@@ -86,7 +108,18 @@ router.post('/', async (req, res) => {
     const parsed = parseInbound(req.body);
     if (!parsed) return;
 
-    const { phoneNumber, messageId, messageType, messageText, displayName } = parsed;
+    let { phoneNumber, messageId, messageType, messageText, displayName } = parsed;
+
+    // ── TIMEZONE / SCHEDULE FIX ─────────────────────────────────────────────
+    // Normalise interactive messages (button/list replies) to 'text' so they
+    // flow through the full routing pipeline. WhatsApp sends type='interactive'
+    // for quick-reply button taps; parseInbound already extracts the button
+    // title into messageText. If messageText is present, treat it as plain text.
+    // If messageText is absent (e.g. an unsupported interactive subtype), the
+    // non-text guard below will still reject it correctly.
+    if (messageType === 'interactive' && messageText) {
+      messageType = 'text';
+    }
 
     // Deduplicate
     if (await isAlreadyProcessed(messageId)) {
@@ -97,7 +130,8 @@ router.post('/', async (req, res) => {
     // Read receipt
     await markAsRead(messageId);
 
-    // Handle non-text messages
+    // Handle non-text messages (audio, image, sticker, location, etc.)
+    // Also catches interactive messages with no extractable text.
     if (messageType !== 'text' || !messageText) {
       await sendMessage(phoneNumber, getTemplateResponse('non_text'));
       return;
