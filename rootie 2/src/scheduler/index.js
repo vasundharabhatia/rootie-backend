@@ -1,17 +1,17 @@
 /**
  * Rootie — Scheduler
  *
- * Three scheduled jobs (all free for all onboarded users, zero OpenAI cost):
+ * Three scheduled message types (all free for all onboarded users, zero OpenAI cost):
  *
- * 1. Noticing Prompt  — 2× per week (Tuesday + Friday at 8:00 AM)
+ * 1. Noticing Prompt  — 2× per week (Tuesday + Friday)
  *    A fuller "Kind Roots Moment" challenge asking parents to observe a specific
  *    behaviour in their child. Rotates through 20 prompts.
  *
- * 2. Moment Nudge     — 1× per week (Wednesday at 8:00 AM)
+ * 2. Moment Nudge     — 1× per week (Wednesday)
  *    A short, soft nudge asking parents to log any good moment they noticed.
  *    Rotates through 8 nudge variants.
  *
- * 3. Weekly Bonding Activity — 1× per week (Saturday at 8:00 AM)
+ * 3. Weekly Bonding Activity — 1× per week (Saturday)
  *    A 5-minute bonding activity for the whole family. Rotates through 7 activities.
  *
  * Weekly message rhythm per parent:
@@ -21,7 +21,14 @@
  *   Saturday  → Bonding Activity
  *   (Monday, Thursday, Sunday — no proactive messages)
  *
- * Total: 4 messages per week — low enough to feel valuable, not spammy.
+ * ── Timezone-aware delivery ────────────────────────────────────────────────────
+ * The scheduler runs every hour (at :00). On each tick it checks which users
+ * have their preferred reminder_hour matching the current hour in their timezone,
+ * and sends only to those users. This means every parent receives messages at
+ * the time they chose during onboarding, regardless of where they are in the world.
+ *
+ * New users who registered before this feature existed default to reminder_hour=8
+ * and timezone='UTC'. Update their records via the admin panel or DB if needed.
  */
 
 const cron       = require('node-cron');
@@ -56,7 +63,6 @@ const DAILY_PROMPTS = [
 ];
 
 // ─── Moment Nudges (8 items, rotating) ───────────────────────────────────
-// Short, soft prompts to encourage moment logging on non-prompt days
 const MOMENT_NUDGES = [
   'Did anything lovely happen with your child today? 🌱 Even something tiny counts — tap to log it.',
   'One small moment is all it takes. 💛 Did you notice anything about your child today worth remembering?',
@@ -80,113 +86,149 @@ const WEEKLY_ACTIVITIES = [
 ];
 
 // ─── Rotating counters ───────────────────────────────────────────────────
-let promptIndex = 0;   // which noticing prompt to send next
-let nudgeIndex  = 0;   // which moment nudge to send next
-let weeklyIndex = 0;   // which bonding activity to send next
+let promptIndex = 0;
+let nudgeIndex  = 0;
+let weeklyIndex = 0;
 
-// ─── Send noticing prompt to all users ───────────────────────────────────
+// ─── Timezone-aware user filtering ───────────────────────────────────────
+/**
+ * Return the current local hour (0–23) for a given IANA timezone string.
+ * Falls back to UTC if the timezone is invalid.
+ */
+function localHourInTimezone(timezone) {
+  try {
+    const tz      = timezone || 'UTC';
+    const now     = new Date();
+    // Intl.DateTimeFormat gives us the local hour in any IANA timezone
+    const hour    = parseInt(
+      new Intl.DateTimeFormat('en-US', {
+        timeZone: tz,
+        hour:     'numeric',
+        hour12:   false,
+      }).format(now),
+      10
+    );
+    // Intl returns 24 for midnight in some environments — normalise to 0
+    return hour === 24 ? 0 : hour;
+  } catch {
+    return new Date().getUTCHours();
+  }
+}
+
+/**
+ * Filter the full user list to only those whose preferred reminder_hour
+ * matches the current local hour in their timezone.
+ */
+function getUsersDueNow(users) {
+  return users.filter(user => {
+    const tz           = user.timezone     || 'UTC';
+    const preferredHr  = user.reminder_hour != null ? user.reminder_hour : 8;
+    const currentLocal = localHourInTimezone(tz);
+    return currentLocal === preferredHr;
+  });
+}
+
+// ─── Send helpers ─────────────────────────────────────────────────────────
+async function deliverToUsers(users, message) {
+  let sent = 0, failed = 0;
+  for (const user of users) {
+    try {
+      await sendMessage(user.whatsapp_number, message);
+      await saveMessage(user.user_id, 'assistant', message, null);
+      sent++;
+    } catch (err) {
+      logger.error('Failed to deliver scheduled message', {
+        userId: user.user_id, error: err.message,
+      });
+      failed++;
+    }
+  }
+  return { sent, failed };
+}
+
+// ─── Job: Noticing Prompt (Tuesday + Friday) ──────────────────────────────
 async function sendDailyPrompts() {
   logger.info('Noticing prompt job started');
   try {
-    const users      = await getOnboardedUsers();
+    const allUsers  = await getOnboardedUsers();
+    const dueUsers  = getUsersDueNow(allUsers);
+    if (!dueUsers.length) {
+      logger.info('Noticing prompt job: no users due this hour');
+      return;
+    }
+
     const promptText = DAILY_PROMPTS[promptIndex % DAILY_PROMPTS.length];
     promptIndex++;
+    const message    = getTemplateResponse('daily_prompt', { promptText });
 
-    const message = getTemplateResponse('daily_prompt', { promptText });
-    let sent = 0, failed = 0;
-
-    for (const user of users) {
-      try {
-        await sendMessage(user.whatsapp_number, message);
-        await saveMessage(user.user_id, 'assistant', message, null);
-        sent++;
-      } catch (err) {
-        logger.error('Failed to send noticing prompt', {
-          userId: user.user_id, error: err.message,
-        });
-        failed++;
-      }
-    }
-    logger.info('Noticing prompt job complete', { sent, failed, total: users.length });
+    const { sent, failed } = await deliverToUsers(dueUsers, message);
+    logger.info('Noticing prompt job complete', { sent, failed, total: dueUsers.length });
   } catch (err) {
     logger.error('Noticing prompt job failed', { error: err.message });
   }
 }
 
-// ─── Send moment nudge to all users ──────────────────────────────────────
+// ─── Job: Moment Nudge (Wednesday) ────────────────────────────────────────
 async function sendMomentNudge() {
   logger.info('Moment nudge job started');
   try {
-    const users   = await getOnboardedUsers();
-    const nudge   = MOMENT_NUDGES[nudgeIndex % MOMENT_NUDGES.length];
+    const allUsers = await getOnboardedUsers();
+    const dueUsers = getUsersDueNow(allUsers);
+    if (!dueUsers.length) {
+      logger.info('Moment nudge job: no users due this hour');
+      return;
+    }
+
+    const nudge = MOMENT_NUDGES[nudgeIndex % MOMENT_NUDGES.length];
     nudgeIndex++;
 
-    let sent = 0, failed = 0;
-    for (const user of users) {
-      try {
-        await sendMessage(user.whatsapp_number, nudge);
-        await saveMessage(user.user_id, 'assistant', nudge, null);
-        sent++;
-      } catch (err) {
-        logger.error('Failed to send moment nudge', {
-          userId: user.user_id, error: err.message,
-        });
-        failed++;
-      }
-    }
-    logger.info('Moment nudge job complete', { sent, failed, total: users.length });
+    const { sent, failed } = await deliverToUsers(dueUsers, nudge);
+    logger.info('Moment nudge job complete', { sent, failed, total: dueUsers.length });
   } catch (err) {
     logger.error('Moment nudge job failed', { error: err.message });
   }
 }
 
-// ─── Send weekly activity to all users ───────────────────────────────────
+// ─── Job: Weekly Bonding Activity (Saturday) ──────────────────────────────
 async function sendWeeklyActivities() {
   logger.info('Weekly activity job started');
   try {
-    const users        = await getOnboardedUsers();
+    const allUsers     = await getOnboardedUsers();
+    const dueUsers     = getUsersDueNow(allUsers);
+    if (!dueUsers.length) {
+      logger.info('Weekly activity job: no users due this hour');
+      return;
+    }
+
     const activityText = WEEKLY_ACTIVITIES[weeklyIndex % WEEKLY_ACTIVITIES.length];
     weeklyIndex++;
+    const message      = getTemplateResponse('weekly_activity', { activityText });
 
-    const message = getTemplateResponse('weekly_activity', { activityText });
-    let sent = 0, failed = 0;
-
-    for (const user of users) {
-      try {
-        await sendMessage(user.whatsapp_number, message);
-        await saveMessage(user.user_id, 'assistant', message, null);
-        sent++;
-      } catch (err) {
-        logger.error('Failed to send weekly activity', {
-          userId: user.user_id, error: err.message,
-        });
-        failed++;
-      }
-    }
-    logger.info('Weekly activity job complete', { sent, failed, total: users.length });
+    const { sent, failed } = await deliverToUsers(dueUsers, message);
+    logger.info('Weekly activity job complete', { sent, failed, total: dueUsers.length });
   } catch (err) {
     logger.error('Weekly activity job failed', { error: err.message });
   }
 }
 
 // ─── Start schedulers ─────────────────────────────────────────────────────
+// All jobs now run every hour at :00.
+// The getUsersDueNow() filter ensures each user only receives a message
+// during the hour that matches their saved reminder_hour in their timezone.
 function startDailyScheduler() {
-  // Noticing Prompt: Tuesday (2) and Friday (5) at 8:00 AM
-  const promptSchedule = process.env.PROMPT_CRON || '0 0 8 * * 2,5';
-  cron.schedule(promptSchedule, sendDailyPrompts);
-  logger.info('Noticing prompt scheduler started (Tue + Fri 8 AM)', { schedule: promptSchedule });
+  // Noticing Prompt: every hour, Tuesday (2) and Friday (5)
+  cron.schedule('0 0 * * * 2,5', sendDailyPrompts);
+  logger.info('Noticing prompt scheduler started (Tue + Fri, hourly dispatch)');
 
-  // Moment Nudge: Wednesday (3) at 8:00 AM
-  const nudgeSchedule = process.env.NUDGE_CRON || '0 0 8 * * 3';
-  cron.schedule(nudgeSchedule, sendMomentNudge);
-  logger.info('Moment nudge scheduler started (Wed 8 AM)', { schedule: nudgeSchedule });
+  // Moment Nudge: every hour, Wednesday (3)
+  cron.schedule('0 0 * * * 3', sendMomentNudge);
+  logger.info('Moment nudge scheduler started (Wed, hourly dispatch)');
 }
 
 function startWeeklyScheduler() {
-  // Bonding Activity: Saturday (6) at 8:00 AM
-  const schedule = process.env.WEEKLY_ACTIVITY_CRON || '0 0 8 * * 6';
-  cron.schedule(schedule, sendWeeklyActivities);
-  logger.info('Weekly activity scheduler started (Sat 8 AM)', { schedule });
+  // Bonding Activity: every hour, Saturday (6)
+  cron.schedule('0 0 * * * 6', sendWeeklyActivities);
+  logger.info('Weekly activity scheduler started (Sat, hourly dispatch)');
 }
 
 module.exports = {
