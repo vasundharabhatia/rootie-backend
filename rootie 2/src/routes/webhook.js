@@ -76,6 +76,7 @@ const { canAskQuestion,
 const { saveMessage,
         isAlreadyProcessed }  = require('../services/conversationService');
 const { checkSafety }         = require('../services/safetyService');
+const { handleActivityCompletion } = require('../services/activityTrackingService');
 
 // ─── GET /webhook — Meta verification ─────────────────────────────────────
 router.get('/', (req, res) => {
@@ -245,7 +246,18 @@ router.post('/', async (req, res) => {
       return;
     }
 
-    // D) General / daily_prompt_response / bonding_activity_response
+    // D) Weekend activity completion — parent replied to Monday follow-up
+    if (classified.message_type === 'weekend_activity_completion') {
+      const { reply_template } = await handleActivityCompletion(user.user_id);
+      const reply = getTemplateResponse(reply_template) || getTemplateResponse('weekend_activity_confirmed');
+      await sendMessage(phoneNumber, reply);
+      await saveMessage(user.user_id, 'user',      messageText, messageId);
+      await saveMessage(user.user_id, 'assistant', reply,       null);
+      await incrementMessages(user.user_id);
+      return;
+    }
+
+    // E) General / daily_prompt_response / bonding_activity_response
     const templateReply = getTemplateResponse(classified.message_type, { isNewUser: !user.onboarding_complete });
     if (templateReply) {
       await sendMessage(phoneNumber, templateReply);
