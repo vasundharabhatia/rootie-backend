@@ -306,7 +306,7 @@ async function handleOnboarding(user, messageText, displayName = '') {
         `You can always just message me to change it.\n\n` +
         `Here's what Rootie can do for you:\n\n` +
         `🌱 *Log moments* — Share something kind or brave your child did\n` +
-        `💬 *Ask questions* — Get parenting guidance (1 question/day on the free plan)\n` +
+        `💬 *Ask questions* — Get parenting guidance (5 questions/day on the free plan)\n` +
         `📅 *Weekly prompts* — A small noticing challenge, twice a week\n` +
         `🎯 *Weekend activities* — A 5-minute bonding activity every weekend\n\n` +
         `Try it now — share a moment you noticed in your child today! 💛`
