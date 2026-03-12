@@ -204,7 +204,9 @@ router.post('/', async (req, res) => {
     // ── Profile update intercept ────────────────────────────────────────────
     // Triggered by keywords like "update profile", "change my name", "wrong child name"
     // OR when the user is already mid-way through an edit session.
-    if (isProfileUpdateTrigger(messageText) || hasActiveSession(user.user_id)) {
+    const profileSessionActive = await hasActiveSession(user.user_id);
+
+    if (isProfileUpdateTrigger(messageText) || profileSessionActive) {
       const freshUser    = await getUserByPhone(phoneNumber);
       const profileReply = await handleProfileUpdate(freshUser, messageText);
       await sendMessage(phoneNumber, profileReply);
