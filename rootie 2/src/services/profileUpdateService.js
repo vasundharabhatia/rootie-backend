@@ -5,7 +5,7 @@
  * Supported updates:
  *   - Parent name
  *   - Child name (for an existing child)
- *   - Preferred reminder time
+ *   - Preferred reminder time (also re-detects and saves timezone)
  *
  * Trigger phrases (case-insensitive, detected by isProfileUpdateTrigger):
  *   "update profile", "change my name", "edit profile", "update my name",
@@ -19,11 +19,30 @@
  *
  * Sessions are stored in-memory (keyed by user_id).
  * Safe for MVP / single-instance deployments.
+ *
+ * ── TIMEZONE / SCHEDULE BUG FIX ──────────────────────────────────────────────
+ *
+ * Previously, the 'enter_time' step only saved reminder_hour:
+ *   await updateUser(user.whatsapp_number, { reminder_hour: hour });
+ *
+ * This meant the timezone column was never refreshed after onboarding. If the
+ * user's timezone was incorrectly detected during onboarding (e.g. a US number
+ * used from India), or if the user moved countries, their reminders would fire
+ * at the wrong local time even after they updated their preferred hour.
+ *
+ * FIX: The 'enter_time' step now also re-detects the timezone from the user's
+ * WhatsApp number and saves both reminder_hour AND timezone together. This
+ * mirrors exactly what onboardingService step 5 does.
+ *
+ * NOTE: The primary cause of timezone/schedule updates not working at all was
+ * the interactive message guard in webhook.js (see webhook.js fix comments).
+ * This fix is a secondary improvement that ensures the saved data is correct.
  */
 
 const { updateUser }            = require('./userService');
 const { getChildrenByUserId,
         updateChild }           = require('./childService');
+const { guessTimezone }         = require('./onboardingService');
 const { logger }                = require('../utils/logger');
 
 // ─── In-memory session store ──────────────────────────────────────────────────
@@ -31,11 +50,11 @@ const { logger }                = require('../utils/logger');
 // Value: { step: string, data: object }
 //
 // Steps:
-//   'choose_field'   — ask what to update
-//   'enter_name'     — waiting for new parent name
-//   'choose_child'   — waiting for which child to rename (multi-child only)
+//   'choose_field'     — ask what to update
+//   'enter_name'       — waiting for new parent name
+//   'choose_child'     — waiting for which child to rename (multi-child only)
 //   'enter_child_name' — waiting for new child name
-//   'enter_time'     — waiting for new reminder time
+//   'enter_time'       — waiting for new reminder time
 const sessions = new Map();
 
 // ─── Trigger detection ────────────────────────────────────────────────────────
@@ -73,7 +92,7 @@ function hasActiveSession(userId) {
   return sessions.has(userId);
 }
 
-// ─── Hour parser (reused from onboardingService) ──────────────────────────────
+// ─── Hour parser (mirrors onboardingService) ──────────────────────────────────
 function parseHour(text) {
   const t = text.trim().toLowerCase();
   if (/\b(morning|morn)\b/.test(t))   return 8;
@@ -209,6 +228,10 @@ async function handleProfileUpdate(user, messageText) {
   }
 
   // ── Step: enter_time ────────────────────────────────────────────────────────
+  // FIX: Also re-detect and save timezone alongside reminder_hour.
+  // Previously only reminder_hour was saved. If the user's timezone was wrong
+  // (bad detection at onboarding, or user moved countries), the reminder would
+  // fire at the wrong local time even after they updated their preferred hour.
   if (session.step === 'enter_time') {
     const hour = parseHour(text);
     if (hour === null) {
@@ -217,14 +240,20 @@ async function handleProfileUpdate(user, messageText) {
         `Please reply with a time like *8am*, *7:30am*, *9*, or *evening*.`
       );
     }
-    await updateUser(user.whatsapp_number, { reminder_hour: hour });
+
+    // Re-detect timezone from phone number (mirrors onboarding step 5 behaviour)
+    const timezone = guessTimezone(user.whatsapp_number);
+
+    await updateUser(user.whatsapp_number, { reminder_hour: hour, timezone });
+
     const displayHour = hour === 0 ? '12:00 AM'
       : hour < 12  ? `${hour}:00 AM`
       : hour === 12 ? '12:00 PM'
       : `${hour - 12}:00 PM`;
+
     sessions.delete(userId);
-    logger.info('Profile update: reminder hour changed', { userId, hour });
-    return `Done! I'll send your prompts at *${displayHour}* from now on. 💛`;
+    logger.info('Profile update: reminder hour and timezone updated', { userId, hour, timezone });
+    return `Done! I'll send your prompts at *${displayHour}* your time from now on. 💛`;
   }
 
   // Fallback — clear stale session
