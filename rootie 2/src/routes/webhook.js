@@ -58,6 +58,7 @@ const { parseInbound,
         verifySignature }     = require('../services/whatsappService');
 const { getOrCreateUser,
         getUserByPhone,
+        updateUser,
         updateLastActive }    = require('../services/userService');
 const { getChildrenByUserId } = require('../services/childService');
 const { handleOnboarding }    = require('../services/onboardingService');
