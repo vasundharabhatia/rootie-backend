@@ -7,6 +7,13 @@
 
 const { query } = require('../db/database');
 
+function normalizeChildName(name) {
+  return (name || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
 // ─── Create a child record ────────────────────────────────────────────────
 async function createChild(userId, {
   childName,
@@ -17,6 +24,15 @@ async function createChild(userId, {
   strengths,
   challenges
 }) {
+  const duplicate = await findPotentialDuplicateChild(userId, childName);
+
+  if (duplicate) {
+    const error = new Error('Duplicate child name detected');
+    error.code = 'DUPLICATE_CHILD';
+    error.child = duplicate;
+    throw error;
+  }
+
   const result = await query(
     `INSERT INTO children
        (user_id, child_name, child_age, temperament, sensitivity_level, social_style, strengths, challenges)
@@ -24,7 +40,7 @@ async function createChild(userId, {
      RETURNING *`,
     [
       userId,
-      childName,
+      childName.trim(),
       childAge || null,
       temperament || null,
       sensitivityLevel || null,
@@ -56,12 +72,25 @@ async function getChildByName(userId, childName, { includeArchived = false } = {
     `SELECT *
      FROM children
      WHERE user_id = $1
-       AND LOWER(child_name) = LOWER($2)
+       AND LOWER(TRIM(child_name)) = LOWER(TRIM($2))
        AND ($3::boolean = true OR is_archived = false)
      LIMIT 1`,
     [userId, childName, includeArchived]
   );
   return result.rows[0] || null;
+}
+
+// ─── Find a likely duplicate child by normalized name ─────────────────────
+async function findPotentialDuplicateChild(userId, childName, { excludeChildId = null } = {}) {
+  const children = await getChildrenByUserId(userId);
+  const target = normalizeChildName(childName);
+
+  return (
+    children.find(child => {
+      if (excludeChildId && child.child_id === excludeChildId) return false;
+      return normalizeChildName(child.child_name) === target;
+    }) || null
+  );
 }
 
 // ─── Get a child by ID ────────────────────────────────────────────────────
@@ -90,6 +119,22 @@ async function updateChild(childId, fields) {
   );
 
   return result.rows[0] || null;
+}
+
+// ─── Safe rename child with duplicate protection ──────────────────────────
+async function renameChild(userId, childId, newChildName) {
+  const duplicate = await findPotentialDuplicateChild(userId, newChildName, {
+    excludeChildId: childId,
+  });
+
+  if (duplicate) {
+    const error = new Error('Duplicate child name detected');
+    error.code = 'DUPLICATE_CHILD';
+    error.child = duplicate;
+    throw error;
+  }
+
+  return updateChild(childId, { child_name: newChildName.trim() });
 }
 
 // ─── Archive a child ──────────────────────────────────────────────────────
@@ -121,8 +166,11 @@ module.exports = {
   createChild,
   getChildrenByUserId,
   getChildByName,
+  findPotentialDuplicateChild,
   getChildById,
   updateChild,
+  renameChild,
   archiveChild,
   buildChildProfile,
+  normalizeChildName,
 };
