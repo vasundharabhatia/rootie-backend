@@ -78,6 +78,9 @@ const { saveMessage,
         isAlreadyProcessed }  = require('../services/conversationService');
 const { checkSafety }         = require('../services/safetyService');
 const { handleActivityCompletion } = require('../services/activityTrackingService');
+const { setPendingAction,
+        getPendingAction,
+        clearPendingAction } = require('../services/pendingActionService');
 
 // ─── GET /webhook — Meta verification ─────────────────────────────────────
 router.get('/', (req, res) => {
