@@ -1,5 +1,5 @@
 /**
- * Rootie — Onboarding Service
+ * Rootie —Onboarding Service
  *
  * Handles the multi-step onboarding flow for new parents.
  * State is stored in the `users` table (`onboarding_step`).
