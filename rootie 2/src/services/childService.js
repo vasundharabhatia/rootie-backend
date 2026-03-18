@@ -3,9 +3,16 @@
  *
  * Manages the children table. Each parent can have multiple children.
  * Child records form the "Child Personality Blueprint" used in AI prompts.
+ *
+ * Birthday fields (v2):
+ *   child_dob   — full date (DATE), stored when parent shares a complete birthday
+ *   birth_year  — year only (SMALLINT), stored when parent only shares year
+ *   child_age   — derived integer, kept in sync for backward compatibility
+ *                 and for fast AI prompt building without recalculation
  */
 
-const { query } = require('../db/database');
+const { query }                        = require('../db/database');
+const { deriveAge, formatBirthdayDisplay } = require('./birthdayService');
 
 function normalizeChildName(name) {
   return (name || '')
@@ -18,6 +25,8 @@ function normalizeChildName(name) {
 async function createChild(userId, {
   childName,
   childAge,
+  childDob,        // ISO date string e.g. "2019-03-12"  (optional)
+  birthYear,       // integer e.g. 2019                  (optional)
   temperament,
   sensitivityLevel,
   socialStyle,
@@ -35,18 +44,21 @@ async function createChild(userId, {
 
   const result = await query(
     `INSERT INTO children
-       (user_id, child_name, child_age, temperament, sensitivity_level, social_style, strengths, challenges)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       (user_id, child_name, child_age, child_dob, birth_year,
+        temperament, sensitivity_level, social_style, strengths, challenges)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      RETURNING *`,
     [
       userId,
       childName.trim(),
-      childAge || null,
-      temperament || null,
+      childAge   || null,
+      childDob   || null,
+      birthYear  || null,
+      temperament    || null,
       sensitivityLevel || null,
-      socialStyle || null,
-      strengths || null,
-      challenges || null,
+      socialStyle    || null,
+      strengths      || null,
+      challenges     || null,
     ]
   );
   return result.rows[0];
@@ -152,8 +164,10 @@ async function archiveChild(childId) {
 }
 
 // ─── Build a compact profile string for AI prompts ───────────────────────
+// Uses the most accurate age available (dob → birth_year → child_age).
 function buildChildProfile(child) {
-  const parts = [`${child.child_name} (age ${child.child_age || '?'})`];
+  const age = deriveAge(child);
+  const parts = [`${child.child_name} (age ${age ?? '?'})`];
   if (child.temperament)       parts.push(`temperament: ${child.temperament}`);
   if (child.sensitivity_level) parts.push(`sensitivity: ${child.sensitivity_level}`);
   if (child.social_style)      parts.push(`social style: ${child.social_style}`);
