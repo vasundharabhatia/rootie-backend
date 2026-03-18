@@ -11,20 +11,25 @@
  *   - Reminder time
  *   - Timezone
  *   - Archive/remove child
- *   - Child traits:
- *       temperament
- *       sensitivity level
- *       social style
- *       strengths
- *       challenges
+ *   - Child traits (conversational — parent describes child in one message,
+ *     AI extracts temperament / sensitivity / social style / strengths / challenges)
  *
  * Read-only commands:
  *   - show my profile
  *   - show my family
  *   - show my settings
+ *
+ * ── Traits flow (new) ────────────────────────────────────────────────────────
+ * OLD: numbered menu → pick one field → enter value → repeat for each field
+ * NEW: Rootie asks one open question → parent describes child naturally →
+ *      AI extracts all fields → Rootie reflects back → parent confirms or edits
+ *
+ * Session steps for traits:
+ *   describe_child_traits  — waiting for parent's free-text description
+ *   confirm_child_traits   — waiting for yes / edit / cancel
  */
 
-const { updateUser } = require('./userService');
+const { updateUser }                     = require('./userService');
 const {
   createChild,
   getChildrenByUserId,
@@ -32,13 +37,19 @@ const {
   archiveChild,
   renameChild,
   findPotentialDuplicateChild,
-} = require('./childService');
+  getChildById,
+}                                        = require('./childService');
 const {
   setFlowSession,
   getFlowSession,
   clearFlowSession,
-} = require('./flowSessionService');
-const { logger } = require('../utils/logger');
+}                                        = require('./flowSessionService');
+const {
+  extractChildTraits,
+  formatTraitsForConfirmation,
+  mergeTraits,
+}                                        = require('./traitExtractorService');
+const { logger }                         = require('../utils/logger');
 
 const TRIGGER_PHRASES = [
   'update profile',
@@ -71,6 +82,9 @@ const TRIGGER_PHRASES = [
   'edit child traits',
   'update child traits',
   'child traits',
+  'tell you about',
+  'update about',
+  'describe my child',
   'temperament',
   'sensitivity',
   'social style',
@@ -91,31 +105,31 @@ const VIEW_TRIGGERS = [
 ];
 
 const TIMEZONE_ALIASES = {
-  singapore: 'Asia/Singapore',
-  sg: 'Asia/Singapore',
-  sgt: 'Asia/Singapore',
-  india: 'Asia/Kolkata',
-  kolkata: 'Asia/Kolkata',
-  mumbai: 'Asia/Kolkata',
-  delhi: 'Asia/Kolkata',
-  ist: 'Asia/Kolkata',
-  dubai: 'Asia/Dubai',
-  uae: 'Asia/Dubai',
-  london: 'Europe/London',
-  uk: 'Europe/London',
-  britain: 'Europe/London',
-  bst: 'Europe/London',
-  gmt: 'Europe/London',
-  sydney: 'Australia/Sydney',
-  australia: 'Australia/Sydney',
-  'new york': 'America/New_York',
-  nyc: 'America/New_York',
-  est: 'America/New_York',
-  california: 'America/Los_Angeles',
-  la: 'America/Los_Angeles',
-  pst: 'America/Los_Angeles',
-  toronto: 'America/Toronto',
-  canada: 'America/Toronto',
+  singapore:   'Asia/Singapore',
+  sg:          'Asia/Singapore',
+  sgt:         'Asia/Singapore',
+  india:       'Asia/Kolkata',
+  kolkata:     'Asia/Kolkata',
+  mumbai:      'Asia/Kolkata',
+  delhi:       'Asia/Kolkata',
+  ist:         'Asia/Kolkata',
+  dubai:       'Asia/Dubai',
+  uae:         'Asia/Dubai',
+  london:      'Europe/London',
+  uk:          'Europe/London',
+  britain:     'Europe/London',
+  bst:         'Europe/London',
+  gmt:         'Europe/London',
+  sydney:      'Australia/Sydney',
+  australia:   'Australia/Sydney',
+  'new york':  'America/New_York',
+  nyc:         'America/New_York',
+  est:         'America/New_York',
+  california:  'America/Los_Angeles',
+  la:          'America/Los_Angeles',
+  pst:         'America/Los_Angeles',
+  toronto:     'America/Toronto',
+  canada:      'America/Toronto',
 };
 
 function isProfileUpdateTrigger(messageText) {
@@ -162,7 +176,7 @@ function formatHour(hour) {
 
 function resolveChildSelection(messageText, children) {
   const text = messageText.trim();
-  const idx = parseInt(text, 10);
+  const idx  = parseInt(text, 10);
 
   if (!Number.isNaN(idx) && idx >= 1 && idx <= children.length) {
     return children[idx - 1];
@@ -174,7 +188,7 @@ function resolveChildSelection(messageText, children) {
 
 function parseChildAge(text) {
   const trimmed = text.trim().toLowerCase();
-  const match = trimmed.match(/\d{1,2}/);
+  const match   = trimmed.match(/\d{1,2}/);
   if (!match) return null;
 
   const age = parseInt(match[0], 10);
@@ -184,7 +198,7 @@ function parseChildAge(text) {
 }
 
 function resolveTimezone(text) {
-  const raw = text.trim();
+  const raw   = text.trim();
   const lower = raw.toLowerCase();
 
   if (TIMEZONE_ALIASES[lower]) return TIMEZONE_ALIASES[lower];
@@ -211,7 +225,7 @@ function buildMainMenu() {
     `• *5* — A child's age\n` +
     `• *6* — My timezone\n` +
     `• *7* — Remove/archive a child\n` +
-    `• *8* — Edit a child's traits\n` +
+    `• *8* — Update a child's personality profile\n` +
     `• *cancel* — Never mind`
   );
 }
@@ -220,33 +234,51 @@ function buildChildrenList(children) {
   return children.map((c, i) => `• *${i + 1}* — ${c.child_name}`).join('\n');
 }
 
-function buildTraitsMenu(childName) {
-  return (
-    `What would you like to update for *${childName}*? 🌱\n\n` +
-    `Reply with:\n` +
-    `• *1* — Temperament\n` +
-    `• *2* — Sensitivity level\n` +
-    `• *3* — Social style\n` +
-    `• *4* — Strengths\n` +
-    `• *5* — Challenges\n` +
-    `• *cancel* — Stop`
-  );
+function buildChildTraitSummary(child) {
+  const lines = [];
+  if (child.temperament)       lines.push(`• Personality: *${child.temperament}*`);
+  if (child.sensitivity_level) lines.push(`• Sensitivity: *${child.sensitivity_level}*`);
+  if (child.social_style)      lines.push(`• Social style: *${child.social_style}*`);
+  if (child.strengths)         lines.push(`• Strengths: *${child.strengths}*`);
+  if (child.challenges)        lines.push(`• Challenges: *${child.challenges}*`);
+
+  return lines.length
+    ? lines.join('\n')
+    : `_(Nothing saved yet)_`;
 }
 
-function buildChildTraitSummary(child) {
+// ─── Ask the open traits question ─────────────────────────────────────────
+function buildTraitsQuestion(childName, existingChild) {
+  const hasExisting = (
+    existingChild.temperament ||
+    existingChild.sensitivity_level ||
+    existingChild.social_style ||
+    existingChild.strengths ||
+    existingChild.challenges
+  );
+
+  if (hasExisting) {
+    return (
+      `Here's what I currently have for *${childName}*:\n\n` +
+      `${buildChildTraitSummary(existingChild)}\n\n` +
+      `Tell me about *${childName}* in your own words — their personality, what they're good at, ` +
+      `what they find tricky. I'll update my notes from what you share. 🌱\n\n` +
+      `_(Or reply *cancel* to stop)_`
+    );
+  }
+
   return (
-    `• Temperament: *${child.temperament || 'Not set'}*\n` +
-    `• Sensitivity level: *${child.sensitivity_level || 'Not set'}*\n` +
-    `• Social style: *${child.social_style || 'Not set'}*\n` +
-    `• Strengths: *${child.strengths || 'Not set'}*\n` +
-    `• Challenges: *${child.challenges || 'Not set'}*`
+    `Tell me a bit about *${childName}* — what are they like? ` +
+    `Their personality, what they're good at, what they find tricky. ` +
+    `Just talk to me like you would a friend. 🌱\n\n` +
+    `_(Or reply *cancel* to stop)_`
   );
 }
 
 async function handleProfileView(user, messageText) {
-  const lower = messageText.trim().toLowerCase();
+  const lower          = messageText.trim().toLowerCase();
   const activeChildren = await getChildrenByUserId(user.user_id);
-  const allChildren = await getChildrenByUserId(user.user_id, { includeArchived: true });
+  const allChildren    = await getChildrenByUserId(user.user_id, { includeArchived: true });
   const archivedChildren = allChildren.filter(c => c.is_archived);
 
   if (lower.includes('family')) {
@@ -263,7 +295,7 @@ async function handleProfileView(user, messageText) {
       : '';
 
     return (
-      `Here’s your family snapshot 🌱\n\n` +
+      `Here's your family snapshot 🌱\n\n` +
       `Active children:\n${activeSection}` +
       archivedSection
     );
@@ -283,7 +315,7 @@ async function handleProfileView(user, messageText) {
     : 'No active children saved yet';
 
   return (
-    `Here’s your profile 💛\n\n` +
+    `Here's your profile 💛\n\n` +
     `• Name: *${user.parent_name || 'Not set'}*\n` +
     `• Children: *${childrenLine}*\n` +
     `• Reminder time: *${formatHour(user.reminder_hour ?? 8)}*\n` +
@@ -292,7 +324,7 @@ async function handleProfileView(user, messageText) {
 }
 
 async function handleProfileUpdate(user, messageText) {
-  const text = messageText.trim();
+  const text   = messageText.trim();
   const userId = user.user_id;
 
   let session = await getFlowSession(userId);
@@ -313,6 +345,7 @@ async function handleProfileUpdate(user, messageText) {
     return buildMainMenu();
   }
 
+  // ── Choose field ──────────────────────────────────────────────────────────
   if (session.step === 'choose_field') {
     if (text === '1' || (/name/i.test(text) && !/child/i.test(text))) {
       await setFlowSession(userId, 'profile_update', 'enter_name', session.data || {});
@@ -329,7 +362,7 @@ async function handleProfileUpdate(user, messageText) {
 
       if (children.length === 1) {
         await setFlowSession(userId, 'profile_update', 'enter_child_name', {
-          childId: children[0].child_id,
+          childId:      children[0].child_id,
           oldChildName: children[0].child_name,
         });
         return `What would you like to rename *${children[0].child_name}* to?`;
@@ -359,7 +392,7 @@ async function handleProfileUpdate(user, messageText) {
 
       if (children.length === 1) {
         await setFlowSession(userId, 'profile_update', 'enter_child_age', {
-          childId: children[0].child_id,
+          childId:   children[0].child_id,
           childName: children[0].child_name,
         });
         return `What is *${children[0].child_name}*'s correct age?`;
@@ -392,7 +425,7 @@ async function handleProfileUpdate(user, messageText) {
 
       if (children.length === 1) {
         await setFlowSession(userId, 'profile_update', 'confirm_archive_child', {
-          childId: children[0].child_id,
+          childId:   children[0].child_id,
           childName: children[0].child_name,
         });
         return `Are you sure you want to archive *${children[0].child_name}*? Reply *yes* to confirm or *cancel* to stop.`;
@@ -404,7 +437,7 @@ async function handleProfileUpdate(user, messageText) {
 
     if (
       text === '8' ||
-      /edit child traits|update child traits|child traits|temperament|sensitivity|social style|strengths|challenges/i.test(text)
+      /edit child traits|update child traits|child traits|personality|temperament|sensitivity|social style|strengths|challenges|tell you about|describe my child/i.test(text)
     ) {
       const children = await getChildrenByUserId(userId);
 
@@ -414,24 +447,21 @@ async function handleProfileUpdate(user, messageText) {
       }
 
       if (children.length === 1) {
-        await setFlowSession(userId, 'profile_update', 'choose_trait_field', {
-          childId: children[0].child_id,
+        await setFlowSession(userId, 'profile_update', 'describe_child_traits', {
+          childId:   children[0].child_id,
           childName: children[0].child_name,
         });
-        return (
-          `Here are the current traits for *${children[0].child_name}*:\n\n` +
-          `${buildChildTraitSummary(children[0])}\n\n` +
-          buildTraitsMenu(children[0].child_name)
-        );
+        return buildTraitsQuestion(children[0].child_name, children[0]);
       }
 
       await setFlowSession(userId, 'profile_update', 'choose_child_for_traits', { children });
-      return `Which child's traits would you like to update?\n\n${buildChildrenList(children)}`;
+      return `Which child's personality profile would you like to update?\n\n${buildChildrenList(children)}`;
     }
 
     return buildMainMenu();
   }
 
+  // ── Parent name ───────────────────────────────────────────────────────────
   if (session.step === 'enter_name') {
     if (!text.length) {
       return `Please type your new name, or reply *cancel* to stop.`;
@@ -444,6 +474,7 @@ async function handleProfileUpdate(user, messageText) {
     return `Done! I'll call you *${text}* from now on. 💛`;
   }
 
+  // ── Child rename ──────────────────────────────────────────────────────────
   if (session.step === 'choose_child_for_rename') {
     const children = session.data.children || [];
     const selected = resolveChildSelection(text, children);
@@ -453,7 +484,7 @@ async function handleProfileUpdate(user, messageText) {
     }
 
     await setFlowSession(userId, 'profile_update', 'enter_child_name', {
-      childId: selected.child_id,
+      childId:      selected.child_id,
       oldChildName: selected.child_name,
     });
 
@@ -480,12 +511,13 @@ async function handleProfileUpdate(user, messageText) {
     logger.info('Profile update: child name changed', {
       userId,
       childId: session.data.childId,
-      newName: text,
+      newName:  text,
     });
 
     return `Done! I've updated *${oldName}*'s name to *${text.trim()}*. 🌱`;
   }
 
+  // ── Reminder time ─────────────────────────────────────────────────────────
   if (session.step === 'enter_time') {
     const hour = parseHour(text);
 
@@ -500,6 +532,7 @@ async function handleProfileUpdate(user, messageText) {
     return `Done! I'll send your prompts at *${formatHour(hour)}* your time from now on. 💛`;
   }
 
+  // ── Add new child ─────────────────────────────────────────────────────────
   if (session.step === 'enter_new_child_name') {
     if (!text.length) {
       return `Please type your child's name, or reply *cancel* to stop.`;
@@ -518,7 +551,7 @@ async function handleProfileUpdate(user, messageText) {
   }
 
   if (session.step === 'enter_new_child_age') {
-    const childAge = parseChildAge(text);
+    const childAge  = parseChildAge(text);
 
     if (childAge === null) {
       return `Please reply with an age between *0* and *18*, or reply *cancel*.`;
@@ -527,10 +560,7 @@ async function handleProfileUpdate(user, messageText) {
     const childName = session.data.childName || 'your child';
 
     try {
-      await createChild(userId, {
-        childName,
-        childAge,
-      });
+      await createChild(userId, { childName, childAge });
     } catch (error) {
       if (error.code === 'DUPLICATE_CHILD') {
         await setFlowSession(userId, 'profile_update', 'enter_new_child_name', {});
@@ -541,15 +571,11 @@ async function handleProfileUpdate(user, messageText) {
 
     await clearFlowSession(userId);
 
-    logger.info('Profile update: child added', {
-      userId,
-      childName,
-      childAge,
-    });
-
+    logger.info('Profile update: child added', { userId, childName, childAge });
     return `Done! I've added *${childName}* (${childAge}) to your family. 🌱`;
   }
 
+  // ── Child age ─────────────────────────────────────────────────────────────
   if (session.step === 'choose_child_for_age') {
     const children = session.data.children || [];
     const selected = resolveChildSelection(text, children);
@@ -559,7 +585,7 @@ async function handleProfileUpdate(user, messageText) {
     }
 
     await setFlowSession(userId, 'profile_update', 'enter_child_age', {
-      childId: selected.child_id,
+      childId:   selected.child_id,
       childName: selected.child_name,
     });
 
@@ -580,7 +606,7 @@ async function handleProfileUpdate(user, messageText) {
 
     logger.info('Profile update: child age changed', {
       userId,
-      childId: session.data.childId,
+      childId:   session.data.childId,
       childName,
       age,
     });
@@ -588,6 +614,7 @@ async function handleProfileUpdate(user, messageText) {
     return `Done! I've updated *${childName}*'s age to *${age}*. 🌱`;
   }
 
+  // ── Timezone ──────────────────────────────────────────────────────────────
   if (session.step === 'enter_timezone') {
     const timezone = resolveTimezone(text);
 
@@ -602,6 +629,7 @@ async function handleProfileUpdate(user, messageText) {
     return `Done! I'll now use *${timezone}* for your reminders and scheduled messages. 💛`;
   }
 
+  // ── Archive child ─────────────────────────────────────────────────────────
   if (session.step === 'choose_child_for_archive') {
     const children = session.data.children || [];
     const selected = resolveChildSelection(text, children);
@@ -611,7 +639,7 @@ async function handleProfileUpdate(user, messageText) {
     }
 
     await setFlowSession(userId, 'profile_update', 'confirm_archive_child', {
-      childId: selected.child_id,
+      childId:   selected.child_id,
       childName: selected.child_name,
     });
 
@@ -631,13 +659,14 @@ async function handleProfileUpdate(user, messageText) {
 
     logger.info('Profile update: child archived', {
       userId,
-      childId: session.data.childId,
+      childId:   session.data.childId,
       childName,
     });
 
     return `Done. I've archived *${childName}* from your active family profile. 🌱`;
   }
 
+  // ── Child selection for traits (multi-child) ──────────────────────────────
   if (session.step === 'choose_child_for_traits') {
     const children = session.data.children || [];
     const selected = resolveChildSelection(text, children);
@@ -646,92 +675,97 @@ async function handleProfileUpdate(user, messageText) {
       return `Please reply with a number or name from the list, or reply *cancel*.\n\n${buildChildrenList(children)}`;
     }
 
-    await setFlowSession(userId, 'profile_update', 'choose_trait_field', {
-      childId: selected.child_id,
+    // Fetch fresh child row so we can show existing traits
+    const freshChild = await getChildById(selected.child_id);
+
+    await setFlowSession(userId, 'profile_update', 'describe_child_traits', {
+      childId:   selected.child_id,
       childName: selected.child_name,
     });
 
-    return (
-      `Here are the current traits for *${selected.child_name}*:\n\n` +
-      `${buildChildTraitSummary(selected)}\n\n` +
-      buildTraitsMenu(selected.child_name)
-    );
+    return buildTraitsQuestion(selected.child_name, freshChild || selected);
   }
 
-  if (session.step === 'choose_trait_field') {
-    const childName = session.data.childName || 'your child';
-
-    if (text === '1' || /temperament/i.test(text)) {
-      await setFlowSession(userId, 'profile_update', 'enter_trait_value', {
-        ...session.data,
-        traitField: 'temperament',
-        traitLabel: 'temperament',
-      });
-      return `What temperament would you like me to save for *${childName}*?\n\nExamples: *easy-going*, *spirited*, *slow-to-warm*`;
-    }
-
-    if (text === '2' || /sensitivity/i.test(text)) {
-      await setFlowSession(userId, 'profile_update', 'enter_trait_value', {
-        ...session.data,
-        traitField: 'sensitivity_level',
-        traitLabel: 'sensitivity level',
-      });
-      return `What sensitivity level should I save for *${childName}*?\n\nExamples: *high*, *medium*, *low*`;
-    }
-
-    if (text === '3' || /social style/i.test(text)) {
-      await setFlowSession(userId, 'profile_update', 'enter_trait_value', {
-        ...session.data,
-        traitField: 'social_style',
-        traitLabel: 'social style',
-      });
-      return `What social style should I save for *${childName}*?\n\nExamples: *introverted*, *extroverted*, *slow to warm up*`;
-    }
-
-    if (text === '4' || /strengths/i.test(text)) {
-      await setFlowSession(userId, 'profile_update', 'enter_trait_value', {
-        ...session.data,
-        traitField: 'strengths',
-        traitLabel: 'strengths',
-      });
-      return `What strengths would you like me to save for *${childName}*?\n\nYou can reply in a short phrase like *curious, gentle, creative*.`;
-    }
-
-    if (text === '5' || /challenges/i.test(text)) {
-      await setFlowSession(userId, 'profile_update', 'enter_trait_value', {
-        ...session.data,
-        traitField: 'challenges',
-        traitLabel: 'challenges',
-      });
-      return `What challenges would you like me to save for *${childName}*?\n\nYou can reply in a short phrase like *transitions, frustration, loud spaces*.`;
-    }
-
-    return buildTraitsMenu(childName);
-  }
-
-  if (session.step === 'enter_trait_value') {
+  // ── NEW: Free-text child description ─────────────────────────────────────
+  if (session.step === 'describe_child_traits') {
     if (!text.length) {
-      return `Please type the new value, or reply *cancel* to stop.`;
+      return `Just tell me about *${session.data.childName || 'your child'}* in your own words, or reply *cancel* to stop. 🌱`;
     }
 
-    const traitField = session.data.traitField;
-    const traitLabel = session.data.traitLabel || 'trait';
-    const childName = session.data.childName || 'your child';
+    // Run AI extraction
+    const extracted = await extractChildTraits(text);
+    const confirmation = formatTraitsForConfirmation(session.data.childName || 'your child', extracted);
 
-    await updateChild(session.data.childId, {
-      [traitField]: text.trim(),
+    // Store extracted traits in session for the confirm step
+    await setFlowSession(userId, 'profile_update', 'confirm_child_traits', {
+      ...session.data,
+      extractedTraits: extracted,
     });
 
-    await clearFlowSession(userId);
+    return confirmation;
+  }
 
-    logger.info('Profile update: child trait changed', {
-      userId,
-      childId: session.data.childId,
-      traitField,
-      value: text.trim(),
-    });
+  // ── NEW: Confirm and save extracted traits ────────────────────────────────
+  if (session.step === 'confirm_child_traits') {
+    const childName      = session.data.childName || 'your child';
+    const extractedTraits = session.data.extractedTraits || {};
 
-    return `Done! I've updated *${childName}*'s ${traitLabel} to *${text.trim()}*. 🌱`;
+    // "yes" / "yep" / "looks good" / "save it" / "correct" / "that's right"
+    const isConfirm = /^(yes|yep|yeah|yup|correct|looks good|save|save it|that'?s right|perfect|great|ok|okay|sure)$/i.test(text.trim());
+
+    if (isConfirm) {
+      const freshChild = await getChildById(session.data.childId);
+      const toSave     = mergeTraits(freshChild || {}, extractedTraits);
+
+      if (Object.keys(toSave).length) {
+        await updateChild(session.data.childId, toSave);
+
+        logger.info('Profile update: child traits saved via AI extraction', {
+          userId,
+          childId:   session.data.childId,
+          childName,
+          saved:     JSON.stringify(toSave),
+        });
+      }
+
+      await clearFlowSession(userId);
+
+      return (
+        `Saved! 🌱 I've updated my notes on *${childName}*. ` +
+        `This will help me give you more personalised guidance going forward. 💛`
+      );
+    }
+
+    // "edit" / "change" / "not quite" / "actually" → loop back to description
+    const isEdit = /^(edit|change|no|nope|not quite|actually|wrong|redo|again|try again)$/i.test(text.trim())
+      || text.trim().length > 10; // treat longer replies as a new description attempt
+
+    if (isEdit && text.trim().length > 10) {
+      // Parent typed a correction or new description — re-run extraction on it
+      const reExtracted  = await extractChildTraits(text);
+      const confirmation = formatTraitsForConfirmation(childName, reExtracted);
+
+      await setFlowSession(userId, 'profile_update', 'confirm_child_traits', {
+        ...session.data,
+        extractedTraits: reExtracted,
+      });
+
+      return confirmation;
+    }
+
+    if (isEdit) {
+      // Short "edit" / "no" — ask them to describe again
+      const freshChild = await getChildById(session.data.childId);
+      await setFlowSession(userId, 'profile_update', 'describe_child_traits', {
+        childId:   session.data.childId,
+        childName: session.data.childName,
+      });
+      return buildTraitsQuestion(childName, freshChild || {});
+    }
+
+    // Unclear reply — re-show the confirmation
+    const confirmation = formatTraitsForConfirmation(childName, extractedTraits);
+    return confirmation;
   }
 
   await clearFlowSession(userId);
