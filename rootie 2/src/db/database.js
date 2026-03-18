@@ -70,8 +70,13 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS rootie_plus_interest_at TIMESTAMPTZ;
     created_at         TIMESTAMPTZ  DEFAULT NOW()
   );
   CREATE INDEX IF NOT EXISTS idx_children_user_id ON children (user_id);
-  ALTER TABLE children ADD COLUMN IF NOT EXISTS is_archived BOOLEAN DEFAULT false;
-  ALTER TABLE children ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
+  ALTER TABLE children ADD COLUMN IF NOT EXISTS is_archived   BOOLEAN  DEFAULT false;
+  ALTER TABLE children ADD COLUMN IF NOT EXISTS archived_at   TIMESTAMPTZ;
+  -- Birthday fields (added in v2): child_dob stores full date when known,
+  -- birth_year stores year-only when parent only shared the year.
+  -- child_age is kept for backward compatibility but is now derived on read.
+  ALTER TABLE children ADD COLUMN IF NOT EXISTS child_dob     DATE;
+  ALTER TABLE children ADD COLUMN IF NOT EXISTS birth_year    SMALLINT;
 
   -- ── Moments ─────────────────────────────────────────────────────────────────
   -- Positive behaviors noticed by parents. Logged automatically when the
