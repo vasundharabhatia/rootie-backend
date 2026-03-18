@@ -19,11 +19,12 @@
  * "later", or a blank reply. It does NOT block onboarding progress.
  */
 
-const { updateUser, getUserByPhone }                = require('./userService');
+const { updateUser, getUserByPhone }                       = require('./userService');
 const { createChild, updateChild, findPotentialDuplicateChild } = require('./childService');
-const { setFlowSession, getFlowSession, clearFlowSession } = require('./flowSessionService');
-const { extractChildTraits }                        = require('./traitExtractorService');
-const { logger }                                    = require('../utils/logger');
+const { setFlowSession, getFlowSession, clearFlowSession }  = require('./flowSessionService');
+const { extractChildTraits }                               = require('./traitExtractorService');
+const { parseBirthday, birthdayToDbFields, formatBirthdayDisplay } = require('./birthdayService');
+const { logger }                                           = require('../utils/logger');
 
 /**
  * Guesses a user's timezone from their WhatsApp number's country code.
@@ -153,10 +154,14 @@ First things first — what's your name? 😊`,
       await setFlowSession(user.user_id, 'onboarding', 'pending_child', { childName });
       await updateUser(user.whatsapp_number, { onboarding_step: 3 });
 
-      return `And how old is *${childName}*?`;
+      return (
+        `When is *${childName}*'s birthday? 🎂\n\n` +
+        `You can share it any way you like — *12 March 2019*, *March 2019*, or just the year *2019*.\n` +
+        `_(Reply *skip* if you'd rather not share)_`
+      );
     }
 
-    // ── Step 3: Save child + age, ask optional personality description ────────
+    // ── Step 3: Save child + birthday, ask optional personality description ──
     case 3: {
       const session = await getFlowSession(user.user_id);
 
@@ -166,12 +171,32 @@ First things first — what's your name? 😊`,
       }
 
       const childName = session.data?.childName || 'Child';
-      const age       = parseInt(text, 10);
-      const childAge  = Number.isNaN(age) ? null : age;
+
+      // ── Parse birthday input ──────────────────────────────────────────────
+      const parsed = parseBirthday(text);
+
+      // If completely unparseable (not a skip, not a date), ask for year as fallback
+      if (!parsed) {
+        // Store that we're now in the year-fallback sub-step
+        await setFlowSession(user.user_id, 'onboarding', 'pending_child_year_fallback', { childName });
+        await updateUser(user.whatsapp_number, { onboarding_step: 32 });
+        return (
+          `I didn't quite catch that. 😊\n\n` +
+          `No worries — what year was *${childName}* born? _(e.g. *2019*)_\n` +
+          `_(Or reply *skip* to move on)_`
+        );
+      }
+
+      const dbFields = birthdayToDbFields(parsed);
 
       let newChild;
       try {
-        newChild = await createChild(user.user_id, { childName, childAge });
+        newChild = await createChild(user.user_id, {
+          childName,
+          childAge:  dbFields.child_age  || null,
+          childDob:  dbFields.child_dob  || null,
+          birthYear: dbFields.birth_year || null,
+        });
       } catch (error) {
         if (error.code === 'DUPLICATE_CHILD') {
           await clearFlowSession(user.user_id);
@@ -184,12 +209,67 @@ First things first — what's your name? 😊`,
         throw error;
       }
 
+      // Build a friendly confirmation of what was understood
+      const birthdayLine = parsed.precision === 'skip'
+        ? ''
+        : `Birthday noted as *${formatBirthdayDisplay(newChild)}*. `;
+
       // Store child ID so the next step can save traits to the right record
       await setFlowSession(user.user_id, 'onboarding', 'pending_traits', {
         childName,
         childId: newChild.child_id,
       });
 
+      await updateUser(user.whatsapp_number, { onboarding_step: 33 });
+
+      return (
+        `Got it. 🌱 I've added *${childName}* to your family. ${birthdayLine}\n\n` +
+        `One quick thing — tell me a little about *${childName}*'s personality. ` +
+        `What are they like? What are they good at? What do they find tricky?\n\n` +
+        `Just talk to me like you would a friend. ` +
+        `_(Or reply *skip* if you'd rather do this later)_`
+      );
+    }
+
+    // ── Step 32: Year-only fallback (when birthday was unparseable) ───────────
+    case 32: {
+      const session = await getFlowSession(user.user_id);
+
+      if (!session || session.flow_type !== 'onboarding') {
+        await updateUser(user.whatsapp_number, { onboarding_step: 2 });
+        return `Let's add your child's name again 🌱\n\nWhat's your child's name?`;
+      }
+
+      const childName = session.data?.childName || 'Child';
+      const parsed    = parseBirthday(text);
+
+      // Accept year-only, month+year, or full date; or skip
+      const dbFields  = parsed ? birthdayToDbFields(parsed) : {};
+
+      let newChild;
+      try {
+        newChild = await createChild(user.user_id, {
+          childName,
+          childAge:  dbFields.child_age  || null,
+          childDob:  dbFields.child_dob  || null,
+          birthYear: dbFields.birth_year || null,
+        });
+      } catch (error) {
+        if (error.code === 'DUPLICATE_CHILD') {
+          await clearFlowSession(user.user_id);
+          await updateUser(user.whatsapp_number, { onboarding_step: 2 });
+          return (
+            `It looks like *${childName}* is already saved in your family profile. 🌱\n\n` +
+            `Let's try again — what's the child's name?`
+          );
+        }
+        throw error;
+      }
+
+      await setFlowSession(user.user_id, 'onboarding', 'pending_traits', {
+        childName,
+        childId: newChild.child_id,
+      });
       await updateUser(user.whatsapp_number, { onboarding_step: 33 });
 
       return (
