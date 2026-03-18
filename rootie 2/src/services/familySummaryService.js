@@ -14,8 +14,9 @@
  * or when child profile data changes.
  */
 
-const { query }  = require('../db/database');
-const { logger } = require('../utils/logger');
+const { query }    = require('../db/database');
+const { logger }   = require('../utils/logger');
+const { deriveAge } = require('./birthdayService');
 
 // ─── Get the current family summary ──────────────────────────────────────
 async function getFamilySummary(userId) {
@@ -43,7 +44,8 @@ function buildBasicSummary(user, children) {
   const parts = [`Parent: ${user.parent_name || 'Unknown'}.`];
   if (children.length) {
     const childParts = children.map(c => {
-      let s = `${c.child_name} (age ${c.child_age || '?'})`;
+      const age = deriveAge(c);
+      let s = `${c.child_name} (age ${age ?? '?'})`;
       if (c.temperament) s += `, ${c.temperament}`;
       if (c.strengths)   s += `, strengths: ${c.strengths}`;
       if (c.challenges)  s += `, challenges: ${c.challenges}`;
