@@ -51,22 +51,40 @@ const {
 }                                        = require('./traitExtractorService');
 const { logger }                         = require('../utils/logger');
 
+// ── Exact / substring trigger phrases ────────────────────────────────────
 const TRIGGER_PHRASES = [
+  // Profile / family
   'update profile',
   'edit profile',
+  'manage family',
+  'edit family',
+
+  // Parent name
   'change my name',
   'update my name',
   'wrong name',
+
+  // Child name
   'wrong child name',
   'change child name',
   'update child',
+  'rename child',
+
+  // Add / remove child
   'add child',
   'add another child',
   'new child',
+  'remove child',
+  'archive child',
+  'delete child',
+
+  // Age
   'change age',
   'update age',
   'wrong age',
   'child age',
+
+  // Reminder / timezone
   'change time',
   'update time',
   'change reminder',
@@ -74,22 +92,41 @@ const TRIGGER_PHRASES = [
   'change timezone',
   'update timezone',
   'timezone',
-  'manage family',
-  'edit family',
-  'remove child',
-  'archive child',
-  'delete child',
+
+  // Traits — exact phrases
   'edit child traits',
   'update child traits',
   'child traits',
+  'child trait',        // singular
+  "child's trait",
+  "child's traits",
   'tell you about',
   'update about',
   'describe my child',
+  'personality profile',
+  'update personality',
+  'edit personality',
   'temperament',
   'sensitivity',
   'social style',
   'strengths',
   'challenges',
+];
+
+// ── Regex patterns for natural-language trait/profile update phrasings ────
+// Catches things like "update hero's trait", "edit Aarav's profile",
+// "tell me about Aarav", "change Uno's personality", etc.
+const TRIGGER_REGEXES = [
+  // "update/edit/change [name]'s trait(s)/profile/personality"
+  /(?:update|edit|change|fix|update)\s+\S+'?s?\s+(?:trait|traits|profile|personality|info|information|details)/i,
+  // "[name]'s trait(s)/profile/personality"
+  /\S+'s\s+(?:trait|traits|profile|personality)/i,
+  // "update/edit [name]'s ..."
+  /(?:update|edit)\s+\S+'s/i,
+  // "tell you about [name]"
+  /tell\s+(?:you|rootie)\s+about/i,
+  // "describe [name]"
+  /describe\s+(?:my\s+)?(?:child|kid|son|daughter|\S+)/i,
 ];
 
 const VIEW_TRIGGERS = [
@@ -134,7 +171,9 @@ const TIMEZONE_ALIASES = {
 
 function isProfileUpdateTrigger(messageText) {
   const lower = messageText.trim().toLowerCase();
-  return TRIGGER_PHRASES.some(phrase => lower.includes(phrase));
+  if (TRIGGER_PHRASES.some(phrase => lower.includes(phrase))) return true;
+  if (TRIGGER_REGEXES.some(rx => rx.test(messageText.trim()))) return true;
+  return false;
 }
 
 function isProfileViewTrigger(messageText) {
@@ -323,6 +362,24 @@ async function handleProfileView(user, messageText) {
   );
 }
 
+/**
+ * Returns true if the message is clearly asking to update a child's traits/personality.
+ * Used to skip the main menu and go straight to the traits flow.
+ */
+function isTraitUpdateIntent(messageText) {
+  const lower = messageText.trim().toLowerCase();
+  const traitKeywords = [
+    'trait', 'traits', 'personality', 'temperament', 'sensitivity',
+    'social style', 'strengths', 'challenges', 'tell you about',
+    'describe my child', 'update about',
+  ];
+  if (traitKeywords.some(kw => lower.includes(kw))) return true;
+  // Regex: "update/edit [name]'s trait/profile/personality"
+  if (/(?:update|edit|change)\s+\S+'s?\s+(?:trait|traits|profile|personality)/i.test(messageText)) return true;
+  if (/\S+'s\s+(?:trait|traits|profile|personality)/i.test(messageText)) return true;
+  return false;
+}
+
 async function handleProfileUpdate(user, messageText) {
   const text   = messageText.trim();
   const userId = user.user_id;
@@ -330,6 +387,27 @@ async function handleProfileUpdate(user, messageText) {
   let session = await getFlowSession(userId);
 
   if (!session) {
+    // If the trigger message already signals a trait update intent,
+    // skip the main menu and jump straight to child selection / traits flow.
+    if (isTraitUpdateIntent(text)) {
+      const children = await getChildrenByUserId(userId);
+
+      if (!children.length) {
+        return `I don't have any active children on record for you yet. 🌱`;
+      }
+
+      if (children.length === 1) {
+        await setFlowSession(userId, 'profile_update', 'describe_child_traits', {
+          childId:   children[0].child_id,
+          childName: children[0].child_name,
+        });
+        return buildTraitsQuestion(children[0].child_name, children[0]);
+      }
+
+      await setFlowSession(userId, 'profile_update', 'choose_child_for_traits', { children });
+      return `Which child's personality profile would you like to update?\n\n${buildChildrenList(children)}`;
+    }
+
     await setFlowSession(userId, 'profile_update', 'choose_field', {});
     return buildMainMenu();
   }
