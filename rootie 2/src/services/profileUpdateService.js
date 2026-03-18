@@ -49,6 +49,7 @@ const {
   formatTraitsForConfirmation,
   mergeTraits,
 }                                        = require('./traitExtractorService');
+const { parseBirthday, birthdayToDbFields, formatBirthdayDisplay, deriveAge } = require('./birthdayService');
 const { logger }                         = require('../utils/logger');
 
 // ── Exact / substring trigger phrases ────────────────────────────────────
@@ -225,17 +226,6 @@ function resolveChildSelection(messageText, children) {
   return children.find(c => c.child_name.toLowerCase() === lower) || null;
 }
 
-function parseChildAge(text) {
-  const trimmed = text.trim().toLowerCase();
-  const match   = trimmed.match(/\d{1,2}/);
-  if (!match) return null;
-
-  const age = parseInt(match[0], 10);
-  if (Number.isNaN(age) || age < 0 || age > 18) return null;
-
-  return age;
-}
-
 function resolveTimezone(text) {
   const raw   = text.trim();
   const lower = raw.toLowerCase();
@@ -261,7 +251,7 @@ function buildMainMenu() {
     `• *2* — A child's name\n` +
     `• *3* — My reminder time\n` +
     `• *4* — Add another child\n` +
-    `• *5* — A child's age\n` +
+    `• *5* — A child's birthday\n` +
     `• *6* — My timezone\n` +
     `• *7* — Remove/archive a child\n` +
     `• *8* — Update a child's personality profile\n` +
@@ -326,7 +316,7 @@ async function handleProfileView(user, messageText) {
     }
 
     const activeSection = activeChildren.length
-      ? activeChildren.map(c => `• *${c.child_name}* — age ${c.child_age ?? '?'}`).join('\n')
+      ? activeChildren.map(c => `• *${c.child_name}* — ${formatBirthdayDisplay(c)}`).join('\n')
       : `• No active children saved`;
 
     const archivedSection = archivedChildren.length
@@ -350,7 +340,7 @@ async function handleProfileView(user, messageText) {
   }
 
   const childrenLine = activeChildren.length
-    ? activeChildren.map(c => `${c.child_name} (${c.child_age ?? '?'})`).join(', ')
+    ? activeChildren.map(c => `${c.child_name} (${formatBirthdayDisplay(c)})`).join(', ')
     : 'No active children saved yet';
 
   return (
@@ -460,7 +450,7 @@ async function handleProfileUpdate(user, messageText) {
       return `Of course 🌱 What is your child's name?`;
     }
 
-    if (text === '5' || /age/i.test(text)) {
+    if (text === '5' || /birthday|age|born/i.test(text)) {
       const children = await getChildrenByUserId(userId);
 
       if (!children.length) {
@@ -469,15 +459,19 @@ async function handleProfileUpdate(user, messageText) {
       }
 
       if (children.length === 1) {
-        await setFlowSession(userId, 'profile_update', 'enter_child_age', {
+        await setFlowSession(userId, 'profile_update', 'enter_child_birthday', {
           childId:   children[0].child_id,
           childName: children[0].child_name,
         });
-        return `What is *${children[0].child_name}*'s correct age?`;
+        return (
+          `When is *${children[0].child_name}*'s birthday? 🎂\n\n` +
+          `You can share it any way you like — *12 March 2019*, *March 2019*, or just the year *2019*.\n` +
+          `_(Reply *skip* to leave it unchanged)_`
+        );
       }
 
-      await setFlowSession(userId, 'profile_update', 'choose_child_for_age', { children });
-      return `Which child's age would you like to update?\n\n${buildChildrenList(children)}`;
+      await setFlowSession(userId, 'profile_update', 'choose_child_for_birthday', { children });
+      return `Which child's birthday would you like to update?\n\n${buildChildrenList(children)}`;
     }
 
     if (text === '6' || /timezone/i.test(text)) {
@@ -621,24 +615,40 @@ async function handleProfileUpdate(user, messageText) {
       return `It looks like *${duplicate.child_name}* is already in your family profile. 🌱\n\nPlease enter a different child's name, or reply *cancel*.`;
     }
 
-    await setFlowSession(userId, 'profile_update', 'enter_new_child_age', {
+    await setFlowSession(userId, 'profile_update', 'enter_new_child_birthday', {
       childName: text.trim(),
     });
 
-    return `How old is *${text.trim()}*?`;
+    return (
+      `When is *${text.trim()}*'s birthday? 🎂\n\n` +
+      `You can share it any way you like — *12 March 2019*, *March 2019*, or just the year *2019*.\n` +
+      `_(Reply *skip* if you'd rather not share)_`
+    );
   }
 
-  if (session.step === 'enter_new_child_age') {
-    const childAge  = parseChildAge(text);
+  if (session.step === 'enter_new_child_birthday') {
+    const childName = session.data.childName || 'your child';
+    const parsed    = parseBirthday(text);
 
-    if (childAge === null) {
-      return `Please reply with an age between *0* and *18*, or reply *cancel*.`;
+    // If unparseable and not a skip, ask for year as fallback
+    if (!parsed) {
+      await setFlowSession(userId, 'profile_update', 'enter_new_child_birth_year', { childName });
+      return (
+        `I didn't quite catch that. 😊\n\n` +
+        `What year was *${childName}* born? _(e.g. *2019*)_\n` +
+        `_(Or reply *skip* to move on)_`
+      );
     }
 
-    const childName = session.data.childName || 'your child';
+    const dbFields = birthdayToDbFields(parsed);
 
     try {
-      await createChild(userId, { childName, childAge });
+      await createChild(userId, {
+        childName,
+        childAge:  dbFields.child_age  || null,
+        childDob:  dbFields.child_dob  || null,
+        birthYear: dbFields.birth_year || null,
+      });
     } catch (error) {
       if (error.code === 'DUPLICATE_CHILD') {
         await setFlowSession(userId, 'profile_update', 'enter_new_child_name', {});
@@ -649,12 +659,38 @@ async function handleProfileUpdate(user, messageText) {
 
     await clearFlowSession(userId);
 
-    logger.info('Profile update: child added', { userId, childName, childAge });
-    return `Done! I've added *${childName}* (${childAge}) to your family. 🌱`;
+    const bdDisplay = parsed.precision === 'skip' ? '' : ` (${formatBirthdayDisplay({ child_dob: dbFields.child_dob, birth_year: dbFields.birth_year, child_age: dbFields.child_age })})`;
+    logger.info('Profile update: child added', { userId, childName });
+    return `Done! I've added *${childName}*${bdDisplay} to your family. 🌱`;
   }
 
-  // ── Child age ─────────────────────────────────────────────────────────────
-  if (session.step === 'choose_child_for_age') {
+  if (session.step === 'enter_new_child_birth_year') {
+    const childName = session.data.childName || 'your child';
+    const parsed    = parseBirthday(text); // try again — may now parse as year
+    const dbFields  = parsed ? birthdayToDbFields(parsed) : {};
+
+    try {
+      await createChild(userId, {
+        childName,
+        childAge:  dbFields.child_age  || null,
+        childDob:  dbFields.child_dob  || null,
+        birthYear: dbFields.birth_year || null,
+      });
+    } catch (error) {
+      if (error.code === 'DUPLICATE_CHILD') {
+        await setFlowSession(userId, 'profile_update', 'enter_new_child_name', {});
+        return `It looks like *${error.child.child_name}* is already in your family profile. 🌱\n\nLet's try again — what is your child's name?`;
+      }
+      throw error;
+    }
+
+    await clearFlowSession(userId);
+    logger.info('Profile update: child added (year fallback)', { userId, childName });
+    return `Done! I've added *${childName}* to your family. 🌱`;
+  }
+
+  // ── Child birthday update ──────────────────────────────────────────────
+  if (session.step === 'choose_child_for_birthday') {
     const children = session.data.children || [];
     const selected = resolveChildSelection(text, children);
 
@@ -662,34 +698,66 @@ async function handleProfileUpdate(user, messageText) {
       return `Please reply with a number or name from the list, or reply *cancel*.\n\n${buildChildrenList(children)}`;
     }
 
-    await setFlowSession(userId, 'profile_update', 'enter_child_age', {
+    await setFlowSession(userId, 'profile_update', 'enter_child_birthday', {
       childId:   selected.child_id,
       childName: selected.child_name,
     });
 
-    return `What is *${selected.child_name}*'s correct age?`;
+    return (
+      `When is *${selected.child_name}*'s birthday? 🎂\n\n` +
+      `You can share it any way you like — *12 March 2019*, *March 2019*, or just the year *2019*.\n` +
+      `_(Reply *skip* to leave it unchanged)_`
+    );
   }
 
-  if (session.step === 'enter_child_age') {
-    const age = parseChildAge(text);
+  if (session.step === 'enter_child_birthday') {
+    const childName = session.data.childName || 'your child';
+    const parsed    = parseBirthday(text);
 
-    if (age === null) {
-      return `Please reply with an age between *0* and *18*, or reply *cancel*.`;
+    if (parsed?.precision === 'skip') {
+      await clearFlowSession(userId);
+      return `No problem! *${childName}*'s birthday was left unchanged. 💛`;
     }
 
-    await updateChild(session.data.childId, { child_age: age });
-    const childName = session.data.childName || 'your child';
+    if (!parsed) {
+      // Fallback to year-only
+      await setFlowSession(userId, 'profile_update', 'enter_child_birth_year', session.data);
+      return (
+        `I didn't quite catch that. 😊\n\n` +
+        `What year was *${childName}* born? _(e.g. *2019*)_\n` +
+        `_(Or reply *skip* to leave it unchanged)_`
+      );
+    }
 
+    const dbFields = birthdayToDbFields(parsed);
+    await updateChild(session.data.childId, dbFields);
     await clearFlowSession(userId);
 
-    logger.info('Profile update: child age changed', {
+    logger.info('Profile update: child birthday changed', {
       userId,
       childId:   session.data.childId,
       childName,
-      age,
+      precision: parsed.precision,
     });
 
-    return `Done! I've updated *${childName}*'s age to *${age}*. 🌱`;
+    return `Done! I've updated *${childName}*'s birthday to *${formatBirthdayDisplay({ child_dob: dbFields.child_dob, birth_year: dbFields.birth_year, child_age: dbFields.child_age })}*. 🌱`;
+  }
+
+  if (session.step === 'enter_child_birth_year') {
+    const childName = session.data.childName || 'your child';
+    const parsed    = parseBirthday(text);
+
+    if (parsed?.precision === 'skip' || !parsed) {
+      await clearFlowSession(userId);
+      return `No problem! *${childName}*'s birthday was left unchanged. 💛`;
+    }
+
+    const dbFields = birthdayToDbFields(parsed);
+    await updateChild(session.data.childId, dbFields);
+    await clearFlowSession(userId);
+
+    logger.info('Profile update: child birth year saved', { userId, childId: session.data.childId });
+    return `Got it! I've noted *${childName}* was born in *${parsed.year}*. 🌱`;
   }
 
   // ── Timezone ──────────────────────────────────────────────────────────────
