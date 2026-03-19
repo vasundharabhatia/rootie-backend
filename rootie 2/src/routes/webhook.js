@@ -77,7 +77,8 @@ const { canAskQuestion,
         incrementMoments,
         incrementHitLimit }   = require('../services/usageService');
 const { saveMessage,
-        isAlreadyProcessed }  = require('../services/conversationService');
+        isAlreadyProcessed,
+        getRecentMessages }    = require('../services/conversationService');
 const { checkSafety }         = require('../services/safetyService');
 const { handleActivityCompletion } = require('../services/activityTrackingService');
 const { setPendingAction,
@@ -306,9 +307,10 @@ router.post('/', async (req, res) => {
     }
 
     // ── Step 1: Classify the message ─────────────────────────────────────────────────
-    const children   = await getChildrenByUserId(user.user_id);
-    const freshUser  = await getUserByPhone(phoneNumber);
-    const classified = await classifyMessage(messageText, children);
+    const children      = await getChildrenByUserId(user.user_id);
+    const freshUser     = await getUserByPhone(phoneNumber);
+    const recentHistory = await getRecentMessages(user.user_id, 3);
+    const classified    = await classifyMessage(messageText, children, recentHistory);
 
     logger.info('Message classified', {
       type:          classified.message_type,

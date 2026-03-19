@@ -173,6 +173,18 @@ You can still log *unlimited child moments* anytime — that part stays free.`;
     return pick(variants);
   },
 
+  // ── Activity suggestion thanks (parent says thanks / will try after Rootie suggests activity) ──
+  activity_suggestion_thanks: () => {
+    const variants = [
+      `That's wonderful! I hope you and your little one have a great time. 🌟 Let me know how it goes! 💛`,
+      `Yay! I hope it's a lovely moment together. 🌱 You're doing something really special by making time for this. 💛`,
+      `That's the spirit! 💛 Enjoy every moment of it. I'm rooting for you both. 🌱`,
+      `Wonderful! Those little moments together are what they'll remember. Have fun! ✨💛`,
+      `Love that! 🌱 Go enjoy it — and feel free to share how it went. I'd love to hear! 💛`,
+    ];
+    return pick(variants);
+  },
+
   // ── Bonding activity response ────────────────────────────────────────────────
   bonding_activity_response: () => {
     const variants = [
@@ -355,6 +367,9 @@ case 'free_limit_repeat_plus_interest':
 
     case 'daily_prompt_response':
       return TEMPLATES.daily_prompt_response();
+
+    case 'activity_suggestion_thanks':
+      return TEMPLATES.activity_suggestion_thanks();
 
     case 'bonding_activity_response':
       return TEMPLATES.bonding_activity_response();
