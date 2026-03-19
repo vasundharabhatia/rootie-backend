@@ -284,22 +284,23 @@ async function sendWeekendActivityFollowups() {
 // The getUsersDueNow() filter ensures each user only receives a message
 // during the hour that matches their saved reminder_hour in their timezone.
 function startDailyScheduler() {
-  // Noticing Prompt: every hour, Tuesday (2) and Friday (5)
-  cron.schedule('0 0 * * * 2,5', sendDailyPrompts);
+  // Noticing Prompt: every hour on the hour, Tuesday (2) and Friday (5)
+  // node-cron uses 5-field format: minute hour day month weekday
+  cron.schedule('0 * * * 2,5', sendDailyPrompts);
   logger.info('Noticing prompt scheduler started (Tue + Fri, hourly dispatch)');
 
-  // Moment Nudge: every hour, Wednesday (3)
-  cron.schedule('0 0 * * * 3', sendMomentNudge);
+  // Moment Nudge: every hour on the hour, Wednesday (3)
+  cron.schedule('0 * * * 3', sendMomentNudge);
   logger.info('Moment nudge scheduler started (Wed, hourly dispatch)');
 }
 
 function startWeeklyScheduler() {
-  // Bonding Activity: every hour, Saturday (6)
-  cron.schedule('0 0 * * * 6', sendWeeklyActivities);
+  // Bonding Activity: every hour on the hour, Saturday (6)
+  cron.schedule('0 * * * 6', sendWeeklyActivities);
   logger.info('Weekly activity scheduler started (Sat, hourly dispatch)');
 
-  // Weekend Activity Follow-up: every hour, Monday (1)
-  cron.schedule('0 0 * * * 1', sendWeekendActivityFollowups);
+  // Weekend Activity Follow-up: every hour on the hour, Monday (1)
+  cron.schedule('0 * * * 1', sendWeekendActivityFollowups);
   logger.info('Weekend activity follow-up scheduler started (Mon, hourly dispatch)');
 }
 
