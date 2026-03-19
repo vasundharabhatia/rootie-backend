@@ -378,7 +378,57 @@ router.post('/', async (req, res) => {
       return;
     }
 
-    // D) Weekend activity completion — parent replied to Monday follow-up
+    // D1) Reaction only — emoji, short ack, ❤️, 👍, etc.
+    if (classified.message_type === 'reaction_only') {
+      const reply = getTemplateResponse('reaction_only');
+      await sendMessage(phoneNumber, reply);
+      await saveMessage(user.user_id, 'user',      messageText, messageId);
+      await saveMessage(user.user_id, 'assistant', reply,       null);
+      await incrementMessages(user.user_id);
+      return;
+    }
+
+    // D2) Evening nudge response — parent replied to the 6pm connection nudge
+    if (classified.message_type === 'evening_nudge_response') {
+      const reply = getTemplateResponse('evening_nudge_response');
+      await sendMessage(phoneNumber, reply);
+      await saveMessage(user.user_id, 'user',      messageText, messageId);
+      await saveMessage(user.user_id, 'assistant', reply,       null);
+      await incrementMessages(user.user_id);
+      return;
+    }
+
+    // D3) Open question response — parent is sharing a worry or question about their child
+    // Route to full AI so Rootie can respond thoughtfully and personally.
+    if (classified.message_type === 'open_question_response') {
+      const access = await canAskQuestion(freshUser);
+      if (!access.allowed) {
+        // Even for open question responses, respect the free plan limit
+        const limitReply = access.firstTimeBlocked
+          ? getTemplateResponse('free_limit_first_time_plus_interest')
+          : getTemplateResponse('free_limit_repeat_plus_interest');
+        if (access.firstTimeBlocked) {
+          await updateUser(phoneNumber, {
+            rootie_plus_interested: true,
+            rootie_plus_interest_at: new Date().toISOString(),
+          });
+        }
+        await sendMessage(phoneNumber, limitReply);
+        await saveMessage(user.user_id, 'user', messageText, messageId);
+        await saveMessage(user.user_id, 'assistant', limitReply, null);
+        await incrementHitLimit(user.user_id);
+        return;
+      }
+      await saveMessage(user.user_id, 'user', messageText, messageId);
+      const reply = await askGPT(freshUser, children, messageText);
+      await sendMessage(phoneNumber, reply);
+      await saveMessage(user.user_id, 'assistant', reply, null);
+      await incrementQuestions(user.user_id);
+      await incrementMessages(user.user_id);
+      return;
+    }
+
+    // D4) Weekend activity completion — parent replied to Sunday follow-up
     if (classified.message_type === 'weekend_activity_completion') {
       const { reply_template } = await handleActivityCompletion(
         user.user_id,
