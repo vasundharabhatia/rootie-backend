@@ -1,5 +1,5 @@
 /**
- * Rootie —Onboarding Service
+ * Rootie — Onboarding Service
  *
  * Handles the multi-step onboarding flow for new parents.
  * State is stored in the `users` table (`onboarding_step`).
@@ -93,34 +93,29 @@ async function handleOnboarding(user, messageText, displayName) {
       await updateUser(user.whatsapp_number, { onboarding_step: 1 });
 
       const introVariants = [
-        `Hello! I'm Rootie 🌱
-Your everyday parenting companion from Kind Roots.
+        `Hey! So glad you're here. 🌱
 
-Think of me as a small pocket guide for raising kind, confident, emotionally resilient children. I'm here to support you through everyday parenting moments — helping with big feelings, building connection, and noticing the good that's already happening in your child's world.
+I'm Rootie — think of me as that friend who happens to know a lot about kids. I'm here for the everyday parenting stuff: the big feelings, the small wins, the moments you want to remember, and the ones you're not sure how to handle.
 
-Whenever you need a quick idea, activity, or bit of reassurance, I'm right here.
+I'm made by Kind Roots, and my whole thing is helping you raise a kind, confident, emotionally resilient child — one small moment at a time.
 
-First, let's get to know each other.
+Let's start simple. What's your name? 😊`,
+
+        `Hi! I'm Rootie 🌱 — your parenting companion from Kind Roots.
+
+I'm not here to give you a lecture or a long to-do list. I'm here to be the calm, always-available friend who helps you notice the good in your child, handle the tricky moments, and feel a little more confident in the everyday stuff.
+
+Just message me whenever — I'm always here.
+
+First things first — what do I call you? 😊`,
+
+        `Hello! Welcome to Rootie 🌱
+
+I'm your parenting companion from Kind Roots. Think of me like a knowledgeable friend you can message any time — whether you want to share a lovely moment your child had, ask for advice on something tricky, or just get a gentle nudge to stay connected.
+
+No judgement, no pressure. Just support, whenever you need it.
+
 What's your name? 😊`,
-
-        `Hi there! I'm Rootie 🌱
-A parenting companion from the Kind Roots team.
-
-I'm here for the everyday stuff — the big feelings, the small wins, the moments you want to remember, and the ones you're not quite sure how to handle. Whether you need a quick idea, a gentle activity, or just a bit of reassurance, I'm always here.
-
-My whole focus is helping you raise a kind, confident, emotionally resilient child — one small moment at a time.
-
-Let's start by getting to know each other.
-What's your name? 😊`,
-
-        `Hello! I'm Rootie 🌱
-Your everyday parenting companion, from Kind Roots.
-
-Parenting is full of moments — some beautiful, some hard, most somewhere in between. I'm here to help you navigate all of it: noticing the good, handling the tricky, and building the kind of connection that stays with your child for life.
-
-Think of me as a calm, always-available pocket guide for raising kind, confident, emotionally resilient kids.
-
-First things first — what's your name? 😊`,
       ];
 
       return introVariants[Math.floor(Math.random() * introVariants.length)];
