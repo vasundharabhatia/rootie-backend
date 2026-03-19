@@ -46,11 +46,12 @@ const SCHEMA = `
 
   -- ── Migrate existing tables: add new columns if they don't exist ────────────
   -- Safe to run on every startup — ALTER TABLE IF NOT EXISTS column is idempotent.
-  ALTER TABLE users ADD COLUMN IF NOT EXISTS timezone      VARCHAR(50)  DEFAULT 'UTC';
-  ALTER TABLE users ADD COLUMN IF NOT EXISTS reminder_hour SMALLINT     DEFAULT 8;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS timezone         VARCHAR(50)  DEFAULT 'UTC';
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS reminder_hour    SMALLINT     DEFAULT 8;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active_date DATE;
 
-  ALTER TABLE users ADD COLUMN IF NOT EXISTS rootie_plus_interested BOOLEAN DEFAULT false;
-ALTER TABLE users ADD COLUMN IF NOT EXISTS rootie_plus_interest_at TIMESTAMPTZ;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS rootie_plus_interested  BOOLEAN DEFAULT false;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS rootie_plus_interest_at TIMESTAMPTZ;
 
   -- ── Children ────────────────────────────────────────────────────────────────
   -- Multiple children per parent. These fields form the Child Personality Blueprint
