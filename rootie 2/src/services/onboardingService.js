@@ -27,27 +27,180 @@ const { parseBirthday, birthdayToDbFields, formatBirthdayDisplay } = require('./
 const { logger }                                           = require('../utils/logger');
 
 /**
+ * Expanded phone-prefix → IANA timezone map.
+ * Prefixes are sorted longest-first so more specific codes (e.g. '971') are
+ * matched before shorter overlapping ones (e.g. '9').
+ *
+ * Confidence levels:
+ *   'high'   — single timezone for the country (e.g. Singapore, UAE, India)
+ *   'medium' — country spans 2–3 zones but one is dominant (e.g. UK, Germany)
+ *   'low'    — large multi-timezone country; user must confirm (e.g. US, Canada, Australia, Brazil)
+ */
+const TIMEZONE_PREFIXES = [
+  // ── 3-digit prefixes (most specific, check first) ──────────────────────
+  { prefix: '971', tz: 'Asia/Dubai',            confidence: 'high'   }, // UAE
+  { prefix: '966', tz: 'Asia/Riyadh',           confidence: 'high'   }, // Saudi Arabia
+  { prefix: '965', tz: 'Asia/Kuwait',           confidence: 'high'   }, // Kuwait
+  { prefix: '974', tz: 'Asia/Qatar',            confidence: 'high'   }, // Qatar
+  { prefix: '973', tz: 'Asia/Bahrain',          confidence: 'high'   }, // Bahrain
+  { prefix: '968', tz: 'Asia/Muscat',           confidence: 'high'   }, // Oman
+  { prefix: '962', tz: 'Asia/Amman',            confidence: 'high'   }, // Jordan
+  { prefix: '961', tz: 'Asia/Beirut',           confidence: 'high'   }, // Lebanon
+  { prefix: '972', tz: 'Asia/Jerusalem',        confidence: 'high'   }, // Israel
+  { prefix: '880', tz: 'Asia/Dhaka',            confidence: 'high'   }, // Bangladesh
+  { prefix: '977', tz: 'Asia/Kathmandu',        confidence: 'high'   }, // Nepal
+  { prefix: '234', tz: 'Africa/Lagos',          confidence: 'high'   }, // Nigeria
+  { prefix: '254', tz: 'Africa/Nairobi',        confidence: 'high'   }, // Kenya
+  { prefix: '233', tz: 'Africa/Accra',          confidence: 'high'   }, // Ghana
+  { prefix: '255', tz: 'Africa/Dar_es_Salaam',  confidence: 'high'   }, // Tanzania
+  { prefix: '256', tz: 'Africa/Kampala',        confidence: 'high'   }, // Uganda
+  { prefix: '251', tz: 'Africa/Addis_Ababa',    confidence: 'high'   }, // Ethiopia
+  { prefix: '212', tz: 'Africa/Casablanca',     confidence: 'high'   }, // Morocco
+  { prefix: '213', tz: 'Africa/Algiers',        confidence: 'high'   }, // Algeria
+  { prefix: '216', tz: 'Africa/Tunis',          confidence: 'high'   }, // Tunisia
+  { prefix: '237', tz: 'Africa/Douala',         confidence: 'high'   }, // Cameroon
+  // ── 2-digit prefixes ───────────────────────────────────────────────────
+  { prefix: '91',  tz: 'Asia/Kolkata',          confidence: 'high'   }, // India
+  { prefix: '92',  tz: 'Asia/Karachi',          confidence: 'high'   }, // Pakistan
+  { prefix: '94',  tz: 'Asia/Colombo',          confidence: 'high'   }, // Sri Lanka
+  { prefix: '95',  tz: 'Asia/Rangoon',          confidence: 'high'   }, // Myanmar
+  { prefix: '60',  tz: 'Asia/Kuala_Lumpur',     confidence: 'high'   }, // Malaysia
+  { prefix: '65',  tz: 'Asia/Singapore',        confidence: 'high'   }, // Singapore
+  { prefix: '66',  tz: 'Asia/Bangkok',          confidence: 'high'   }, // Thailand
+  { prefix: '84',  tz: 'Asia/Ho_Chi_Minh',      confidence: 'high'   }, // Vietnam
+  { prefix: '63',  tz: 'Asia/Manila',           confidence: 'high'   }, // Philippines
+  { prefix: '62',  tz: 'Asia/Jakarta',          confidence: 'medium' }, // Indonesia (multiple zones)
+  { prefix: '82',  tz: 'Asia/Seoul',            confidence: 'high'   }, // South Korea
+  { prefix: '81',  tz: 'Asia/Tokyo',            confidence: 'high'   }, // Japan
+  { prefix: '86',  tz: 'Asia/Shanghai',         confidence: 'high'   }, // China
+  { prefix: '98',  tz: 'Asia/Tehran',           confidence: 'high'   }, // Iran
+  { prefix: '90',  tz: 'Europe/Istanbul',       confidence: 'high'   }, // Turkey
+  { prefix: '20',  tz: 'Africa/Cairo',          confidence: 'high'   }, // Egypt
+  { prefix: '27',  tz: 'Africa/Johannesburg',   confidence: 'high'   }, // South Africa
+  { prefix: '44',  tz: 'Europe/London',         confidence: 'high'   }, // UK
+  { prefix: '49',  tz: 'Europe/Berlin',         confidence: 'high'   }, // Germany
+  { prefix: '33',  tz: 'Europe/Paris',          confidence: 'high'   }, // France
+  { prefix: '34',  tz: 'Europe/Madrid',         confidence: 'high'   }, // Spain
+  { prefix: '39',  tz: 'Europe/Rome',           confidence: 'high'   }, // Italy
+  { prefix: '31',  tz: 'Europe/Amsterdam',      confidence: 'high'   }, // Netherlands
+  { prefix: '32',  tz: 'Europe/Brussels',       confidence: 'high'   }, // Belgium
+  { prefix: '41',  tz: 'Europe/Zurich',         confidence: 'high'   }, // Switzerland
+  { prefix: '43',  tz: 'Europe/Vienna',         confidence: 'high'   }, // Austria
+  { prefix: '46',  tz: 'Europe/Stockholm',      confidence: 'high'   }, // Sweden
+  { prefix: '47',  tz: 'Europe/Oslo',           confidence: 'high'   }, // Norway
+  { prefix: '45',  tz: 'Europe/Copenhagen',     confidence: 'high'   }, // Denmark
+  { prefix: '48',  tz: 'Europe/Warsaw',         confidence: 'high'   }, // Poland
+  { prefix: '55',  tz: 'America/Sao_Paulo',     confidence: 'low'    }, // Brazil (multiple zones)
+  { prefix: '52',  tz: 'America/Mexico_City',   confidence: 'low'    }, // Mexico (multiple zones)
+  { prefix: '54',  tz: 'America/Argentina/Buenos_Aires', confidence: 'high' }, // Argentina
+  { prefix: '56',  tz: 'America/Santiago',      confidence: 'high'   }, // Chile
+  { prefix: '57',  tz: 'America/Bogota',        confidence: 'high'   }, // Colombia
+  { prefix: '51',  tz: 'America/Lima',          confidence: 'high'   }, // Peru
+  { prefix: '58',  tz: 'America/Caracas',       confidence: 'high'   }, // Venezuela
+  { prefix: '64',  tz: 'Pacific/Auckland',      confidence: 'high'   }, // New Zealand
+  // ── 1-digit prefixes (least specific, check last) ──────────────────────
+  { prefix: '1',   tz: 'America/New_York',      confidence: 'low'    }, // US/Canada (multiple zones)
+  { prefix: '7',   tz: 'Europe/Moscow',         confidence: 'low'    }, // Russia (multiple zones)
+  { prefix: '61',  tz: 'Australia/Sydney',      confidence: 'low'    }, // Australia (multiple zones)
+];
+
+/**
  * Guesses a user's timezone from their WhatsApp number's country code.
+ * Returns { tz, confidence } or null if no match.
  * @param {string} whatsappNumber
- * @returns {string|null}
+ * @returns {{ tz: string, confidence: 'high'|'medium'|'low' }|null}
  */
 function guessTimezone(whatsappNumber) {
-  const prefixes = {
-    '1':   'America/New_York',
-    '44':  'Europe/London',
-    '91':  'Asia/Kolkata',
-    '61':  'Australia/Sydney',
-    '65':  'Asia/Singapore',
-    '971': 'Asia/Dubai',
-  };
-
-  for (const prefix in prefixes) {
-    if (whatsappNumber.startsWith(prefix)) {
-      return prefixes[prefix];
+  // Sort by prefix length descending so longer (more specific) prefixes match first
+  const sorted = [...TIMEZONE_PREFIXES].sort((a, b) => b.prefix.length - a.prefix.length);
+  for (const entry of sorted) {
+    if (whatsappNumber.startsWith(entry.prefix)) {
+      return { tz: entry.tz, confidence: entry.confidence };
     }
   }
-
   return null;
+}
+
+/**
+ * Resolves a free-text city/country/timezone string to an IANA timezone.
+ * Used in the timezone confirmation step.
+ * @param {string} text
+ * @returns {string|null}
+ */
+function resolveTimezoneFromText(text) {
+  const t = text.trim().toLowerCase();
+  const map = {
+    // Cities
+    'new york': 'America/New_York', 'los angeles': 'America/Los_Angeles',
+    'chicago': 'America/Chicago', 'toronto': 'America/Toronto',
+    'vancouver': 'America/Vancouver', 'london': 'Europe/London',
+    'paris': 'Europe/Paris', 'berlin': 'Europe/Berlin',
+    'dubai': 'Asia/Dubai', 'mumbai': 'Asia/Kolkata', 'delhi': 'Asia/Kolkata',
+    'bangalore': 'Asia/Kolkata', 'kolkata': 'Asia/Kolkata',
+    'karachi': 'Asia/Karachi', 'lahore': 'Asia/Karachi',
+    'dhaka': 'Asia/Dhaka', 'singapore': 'Asia/Singapore',
+    'kuala lumpur': 'Asia/Kuala_Lumpur', 'kl': 'Asia/Kuala_Lumpur',
+    'bangkok': 'Asia/Bangkok', 'jakarta': 'Asia/Jakarta',
+    'manila': 'Asia/Manila', 'tokyo': 'Asia/Tokyo', 'seoul': 'Asia/Seoul',
+    'beijing': 'Asia/Shanghai', 'shanghai': 'Asia/Shanghai',
+    'hong kong': 'Asia/Hong_Kong', 'sydney': 'Australia/Sydney',
+    'melbourne': 'Australia/Melbourne', 'brisbane': 'Australia/Brisbane',
+    'perth': 'Australia/Perth', 'auckland': 'Pacific/Auckland',
+    'nairobi': 'Africa/Nairobi', 'lagos': 'Africa/Lagos',
+    'johannesburg': 'Africa/Johannesburg', 'cairo': 'Africa/Cairo',
+    'casablanca': 'Africa/Casablanca', 'riyadh': 'Asia/Riyadh',
+    'tehran': 'Asia/Tehran', 'istanbul': 'Europe/Istanbul',
+    'moscow': 'Europe/Moscow', 'sao paulo': 'America/Sao_Paulo',
+    'buenos aires': 'America/Argentina/Buenos_Aires',
+    'bogota': 'America/Bogota', 'lima': 'America/Lima',
+    // Countries
+    'india': 'Asia/Kolkata', 'pakistan': 'Asia/Karachi',
+    'bangladesh': 'Asia/Dhaka', 'sri lanka': 'Asia/Colombo',
+    'nepal': 'Asia/Kathmandu', 'uk': 'Europe/London',
+    'united kingdom': 'Europe/London', 'england': 'Europe/London',
+    'usa': 'America/New_York', 'us': 'America/New_York',
+    'united states': 'America/New_York', 'america': 'America/New_York',
+    'canada': 'America/Toronto', 'australia': 'Australia/Sydney',
+    'new zealand': 'Pacific/Auckland', 'uae': 'Asia/Dubai',
+    'emirates': 'Asia/Dubai', 'saudi': 'Asia/Riyadh',
+    'saudi arabia': 'Asia/Riyadh', 'qatar': 'Asia/Qatar',
+    'kuwait': 'Asia/Kuwait', 'bahrain': 'Asia/Bahrain',
+    'oman': 'Asia/Muscat', 'jordan': 'Asia/Amman',
+    'lebanon': 'Asia/Beirut', 'israel': 'Asia/Jerusalem',
+    'egypt': 'Africa/Cairo', 'nigeria': 'Africa/Lagos',
+    'kenya': 'Africa/Nairobi', 'ghana': 'Africa/Accra',
+    'south africa': 'Africa/Johannesburg', 'ethiopia': 'Africa/Addis_Ababa',
+    'tanzania': 'Africa/Dar_es_Salaam', 'uganda': 'Africa/Kampala',
+    'malaysia': 'Asia/Kuala_Lumpur', 'indonesia': 'Asia/Jakarta',
+    'philippines': 'Asia/Manila', 'thailand': 'Asia/Bangkok',
+    'vietnam': 'Asia/Ho_Chi_Minh', 'myanmar': 'Asia/Rangoon',
+    'china': 'Asia/Shanghai', 'japan': 'Asia/Tokyo',
+    'south korea': 'Asia/Seoul', 'korea': 'Asia/Seoul',
+    'turkey': 'Europe/Istanbul', 'iran': 'Asia/Tehran',
+    'germany': 'Europe/Berlin', 'france': 'Europe/Paris',
+    'spain': 'Europe/Madrid', 'italy': 'Europe/Rome',
+    'netherlands': 'Europe/Amsterdam', 'belgium': 'Europe/Brussels',
+    'switzerland': 'Europe/Zurich', 'austria': 'Europe/Vienna',
+    'sweden': 'Europe/Stockholm', 'norway': 'Europe/Oslo',
+    'denmark': 'Europe/Copenhagen', 'poland': 'Europe/Warsaw',
+    'russia': 'Europe/Moscow', 'brazil': 'America/Sao_Paulo',
+    'mexico': 'America/Mexico_City', 'argentina': 'America/Argentina/Buenos_Aires',
+    'colombia': 'America/Bogota', 'chile': 'America/Santiago',
+    'peru': 'America/Lima', 'venezuela': 'America/Caracas',
+    'morocco': 'Africa/Casablanca', 'algeria': 'Africa/Algiers',
+    'tunisia': 'Africa/Tunis',
+    // IANA direct pass-through (if user types the IANA string)
+  };
+
+  if (map[t]) return map[t];
+
+  // Try IANA direct (e.g. 'Asia/Kolkata')
+  try {
+    new Intl.DateTimeFormat('en', { timeZone: text.trim() }).format();
+    return text.trim();
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -338,8 +491,8 @@ What's your name? 😊`,
 
     // ── Step 5: Reminder time ─────────────────────────────────────────────────
     case 5: {
-      const hour     = parseHour(text);
-      const timezone = guessTimezone(user.whatsapp_number);
+      const hour   = parseHour(text);
+      const guess  = guessTimezone(user.whatsapp_number);
 
       if (hour === null) {
         return `I didn't quite catch that. 😊 Could you try a time like *8am*, *7:30pm*, or *morning*?`;
@@ -351,26 +504,85 @@ What's your name? 😊`,
         hour === 12 ? '12:00 PM' :
         `${hour - 12}:00 PM`;
 
-      await clearFlowSession(user.user_id);
+      // Save the reminder hour now; timezone will be confirmed/set in step 55
+      await updateUser(user.whatsapp_number, { reminder_hour: hour });
 
+      // High-confidence guess → save timezone silently and complete onboarding
+      if (guess && guess.confidence === 'high') {
+        await clearFlowSession(user.user_id);
+        await updateUser(user.whatsapp_number, {
+          onboarding_complete: true,
+          onboarding_step:     6,
+          timezone:            guess.tz,
+        });
+
+        logger.info('Onboarding complete (timezone auto-detected)', {
+          userId: user.user_id, timezone: guess.tz, reminderHour: hour,
+        });
+
+        const freshUser = await getUserByPhone(user.whatsapp_number);
+        return (
+          `You're all set, *${freshUser?.parent_name || 'there'}*! 🌟\n\n` +
+          `I'll send you little thoughts and activities around *${displayHour}* your time. ` +
+          `You can message me to change it any time.\n\n` +
+          `To get started, try sharing a small, positive moment you noticed in your child today. 💛`
+        );
+      }
+
+      // Medium/low confidence or no match → ask for city/country to confirm
+      const guessLine = (guess && guess.confidence === 'medium')
+        ? `I think you might be in *${guess.tz.replace('_', ' ')}* — is that right? `
+        : '';
+
+      await updateUser(user.whatsapp_number, { onboarding_step: 55 });
+
+      return (
+        `Got it — I'll send you messages around *${displayHour}*. 🌱\n\n` +
+        `${guessLine}` +
+        `Just so I get the timing right — what city or country are you in? ` +
+        `(e.g. *New York*, *Sydney*, *Lagos*, *India*)\n\n` +
+        `_(Reply *skip* if you'd rather not share — I'll use a default)_`
+      );
+    }
+
+    // ── Step 55: Timezone confirmation (when guess was low/medium/null) ───────
+    case 55: {
+      let timezone = 'UTC';
+
+      if (!isSkipReply(text)) {
+        const resolved = resolveTimezoneFromText(text);
+        if (resolved) {
+          timezone = resolved;
+        } else {
+          // Couldn't resolve — ask once more with a gentler prompt
+          return (
+            `Hmm, I didn't recognise that. 😊 Try something like *Singapore*, *London*, *Mumbai*, *New York*, or *Sydney*.\n\n` +
+            `_(Or reply *skip* to use a default timezone)_`
+          );
+        }
+      }
+
+      await clearFlowSession(user.user_id);
       await updateUser(user.whatsapp_number, {
         onboarding_complete: true,
         onboarding_step:     6,
-        reminder_hour:       hour,
         timezone,
       });
 
-      logger.info('Onboarding complete', {
-        userId:       user.user_id,
-        timezone,
-        reminderHour: hour,
+      logger.info('Onboarding complete (timezone confirmed by user)', {
+        userId: user.user_id, timezone, reminderHour: user.reminder_hour,
       });
 
       const freshUser = await getUserByPhone(user.whatsapp_number);
+      const rh        = freshUser?.reminder_hour ?? 8;
+      const dh        = rh === 0  ? '12:00 AM' :
+                        rh < 12   ? `${rh}:00 AM` :
+                        rh === 12 ? '12:00 PM' :
+                        `${rh - 12}:00 PM`;
 
       return (
         `You're all set, *${freshUser?.parent_name || 'there'}*! 🌟\n\n` +
-        `I'll send you little thoughts and activities around *${displayHour}* your time. ` +
+        `I'll send you little thoughts and activities around *${dh}* your time. ` +
         `You can message me to change it any time.\n\n` +
         `To get started, try sharing a small, positive moment you noticed in your child today. 💛`
       );
@@ -391,5 +603,6 @@ What's your name? 😊`,
 module.exports = {
   handleOnboarding,
   guessTimezone,
+  resolveTimezoneFromText,
   parseHour,
 };
