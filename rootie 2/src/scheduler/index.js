@@ -141,13 +141,14 @@ const EVENING_NUDGES = [
   `Evening check-in from Rootie 🌙 — how are *you* doing? Parenting is hard, and you're doing it anyway. Take a breath. Then go find your child and do something small together — a hug, a silly game, five minutes of their favourite show. Connection is the whole thing. 💛`,
 ];
 
-// ─── Rotating counters ───────────────────────────────────────────────────
+// ─── Rotating counters ───────────────────────────────────────────────────────────────────
 let promptIndex  = 0;
 let nudgeIndex   = 0;
 let weeklyIndex  = 0;
 let eveningIndex = 0;
+let openQIndex   = 0;
 
-// ─── Timezone-aware user filtering ───────────────────────────────────────
+// ─── Timezone-aware user filtering ───────────────────────────────────────────────────────────────────
 /**
  * Return the current local hour (0–23) for a given IANA timezone string.
  * Falls back to UTC if the timezone is invalid.
@@ -182,36 +183,26 @@ function getUsersDueNow(users) {
   });
 }
 
+// Fixed evening hour: all evening messages fire at 18:00 (6pm) local time.
+const EVENING_HOUR = 18;
+
 /**
- * Filter users whose evening nudge hour matches the current local hour.
+ * Filter users whose current local hour is 18:00 (6pm).
+ * Used for all evening messages (connection nudge + weekend follow-up).
  *
- * Evening hour formula (collision-free for all 24 possible reminder_hour values):
+ * Edge case: a parent who chose reminder_hour=18 would receive a morning
+ * message AND an evening nudge at the same time on Mon/Wed (days that have
+ * both). The hasMorningMessageToday flag is passed in to skip those users.
  *
- *   raw     = reminder_hour + 10
- *   clamped = clamp(raw, 17, 23)       — never before 5pm, never past 11pm
- *   final   = if clamped === reminder_hour then reminder_hour + 1 else clamped
- *
- * The final guard ensures the evening slot is always at least 1 hour after the
- * morning slot, even for the rare edge case where +10 lands on the same hour
- * (only possible if reminder_hour ≥ 17 and the +10 clamp equals reminder_hour).
- *
- * Examples:
- *   reminder_hour = 6  → raw=16 → clamped=17 (5pm)
- *   reminder_hour = 8  → raw=18 → clamped=18 (6pm)
- *   reminder_hour = 9  → raw=19 → clamped=19 (7pm)
- *   reminder_hour = 12 → raw=22 → clamped=22 (10pm)
- *   reminder_hour = 17 → raw=27 → clamped=23 ≠ 17 → 23 (11pm)
- *   reminder_hour = 22 → raw=32 → clamped=23 ≠ 22 → 23 (11pm)
- *   reminder_hour = 23 → raw=33 → clamped=23 = 23 → guard: 23+1=24 → wraps to 0
- *                       (midnight — acceptable for a 11pm reminder_hour edge case)
+ * @param {Array} users
+ * @param {boolean} [skipReminderHour18=false] - if true, exclude users whose reminder_hour is 18
  */
-function getUsersDueForEvening(users) {
+function getUsersDueForEvening(users, skipReminderHour18 = false) {
   return users.filter(user => {
-    const tz          = user.timezone     || 'UTC';
+    const tz          = user.timezone || 'UTC';
     const preferredHr = user.reminder_hour != null ? user.reminder_hour : 8;
-    const clamped   = Math.min(Math.max(preferredHr + 10, 17), 23);
-    const eveningHr = clamped === preferredHr ? (preferredHr + 1) % 24 : clamped;
-    return localHourInTimezone(tz) === eveningHr;
+    if (skipReminderHour18 && preferredHr === EVENING_HOUR) return false;
+    return localHourInTimezone(tz) === EVENING_HOUR;
   });
 }
 
@@ -316,7 +307,7 @@ async function sendWeeklyActivities() {
 // ─── Job: Weekend Activity Follow-up (Sunday evening) ─────────────────────
 // Sends a gentle check-in to every user who received a weekend activity
 // but has not yet been asked if they completed it.
-// Runs every hour on Sunday so it respects each user's preferred evening hour.
+// Runs every hour on Sunday; fires for each user when their local time is 18:00.
 async function sendWeekendActivityFollowups() {
   logger.info('Weekend activity follow-up job started');
   try {
@@ -326,7 +317,7 @@ async function sendWeekendActivityFollowups() {
       return;
     }
 
-    // Filter to users whose evening hour matches the current local hour
+    // Filter to users whose local time is currently 18:00 (fixed evening hour)
     const allUsers = await getOnboardedUsers();
     const userMap  = new Map(allUsers.map(u => [u.user_id, u]));
 
@@ -335,11 +326,8 @@ async function sendWeekendActivityFollowups() {
       const userProfile = userMap.get(row.user_id);
       if (!userProfile) continue;
 
-      const tz          = userProfile.timezone     || 'UTC';
-      const preferredHr = userProfile.reminder_hour != null ? userProfile.reminder_hour : 8;
-      const clamped   = Math.min(Math.max(preferredHr + 10, 17), 23);
-      const eveningHr = clamped === preferredHr ? (preferredHr + 1) % 24 : clamped;
-      if (localHourInTimezone(tz) !== eveningHr) continue;
+      const tz = userProfile.timezone || 'UTC';
+      if (localHourInTimezone(tz) !== EVENING_HOUR) continue;
 
       try {
         const message = getTemplateResponse('weekend_activity_followup');
@@ -359,17 +347,19 @@ async function sendWeekendActivityFollowups() {
     logger.error('Weekend follow-up job failed', { error: err.message });
   }
 }
-
-// ─── Job: Evening Connection Nudge (Monday–Friday, evening) ───────────────
+// ─── Job: Evening Connection Nudge (Monday–Friday, evening) ─────────────────────
 // Sends a warm reminder to put the phone down and spend 15 minutes with
-// the child. Delivered at each parent's personal evening hour.
-// Morning messages on Mon/Wed also go out on those days but at a completely
-// different hour (reminder_hour vs reminder_hour + 10 — always 10+ hrs apart).
+// the child. Delivered at a fixed 18:00 (6pm) local time, Mon–Fri.
+// On Mon and Wed (days with a morning message), users whose reminder_hour=18
+// are skipped to avoid sending two messages at the same time.
 async function sendEveningNudge() {
   logger.info('Evening nudge job started');
   try {
     const allUsers = await getOnboardedUsers();
-    const dueUsers = getUsersDueForEvening(allUsers);
+    // Mon=1, Wed=3 have morning messages — skip reminder_hour=18 users on those days
+    const dayOfWeek     = new Date().getDay(); // 0=Sun, 1=Mon, ...
+    const hasMorningToday = (dayOfWeek === 1 || dayOfWeek === 3);
+    const dueUsers = getUsersDueForEvening(allUsers, hasMorningToday);
     if (!dueUsers.length) {
       logger.info('Evening nudge job: no users due this hour');
       return;
@@ -385,15 +375,50 @@ async function sendEveningNudge() {
   }
 }
 
-// ─── Start schedulers ─────────────────────────────────────────────────────
+// ─── Job: Weekly Open Question (Tuesday morning) ─────────────────────────────────────────────────
+// Invites parents to share any worry, question, or curiosity about their child.
+// Sent Tuesday morning at the parent's reminder_hour. Rotates through 15 templates.
+// Replies are classified as open_question_response and routed to full AI.
+async function sendWeeklyOpenQuestion() {
+  logger.info('Weekly open question job started');
+  try {
+    const allUsers = await getOnboardedUsers();
+    const dueUsers = getUsersDueNow(allUsers);
+    if (!dueUsers.length) {
+      logger.info('Weekly open question job: no users due this hour');
+      return;
+    }
+
+    const message = getTemplateResponse('weekly_open_question');
+    openQIndex++;
+
+    const { sent, failed } = await deliverToUsers(dueUsers, message);
+    logger.info('Weekly open question job complete', { sent, failed, total: dueUsers.length });
+  } catch (err) {
+    logger.error('Weekly open question job failed', { error: err.message });
+  }
+}
+
+// ─── Start schedulers ───────────────────────────────────────────────────────────────────
 // All jobs run every hour at :00 on their designated days.
-// Morning jobs use getUsersDueNow()     → fires at parent's reminder_hour.
-// Evening jobs use getUsersDueForEvening() → fires at reminder_hour + 10 (min 17, max 21).
-// The 10-hour gap guarantees morning and evening messages never overlap.
+// Morning jobs use getUsersDueNow()        → fires at parent's reminder_hour.
+// Evening jobs use getUsersDueForEvening() → fires at fixed 18:00 local time.
+//
+// Updated weekly rhythm:
+//   Mon morning : Noticing Prompt
+//   Tue morning : Weekly Open Question
+//   Wed morning : Moment Nudge
+//   Mon–Fri 18:00: Evening Connection Nudge
+//   Sat morning : Bonding Activity
+//   Sun 18:00   : Weekend Activity Follow-up
 function startDailyScheduler() {
   // Noticing Prompt: Monday morning (1)
   cron.schedule('0 * * * 1', sendDailyPrompts);
   logger.info('Noticing prompt scheduler started (Mon morning)');
+
+  // Weekly Open Question: Tuesday morning (2)
+  cron.schedule('0 * * * 2', sendWeeklyOpenQuestion);
+  logger.info('Weekly open question scheduler started (Tue morning)');
 
   // Moment Nudge: Wednesday morning (3)
   cron.schedule('0 * * * 3', sendMomentNudge);
@@ -422,4 +447,5 @@ module.exports = {
   sendWeeklyActivities,
   sendWeekendActivityFollowups,
   sendEveningNudge,
+  sendWeeklyOpenQuestion,
 };
