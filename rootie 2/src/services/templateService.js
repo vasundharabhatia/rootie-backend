@@ -124,13 +124,51 @@ You can still log *unlimited child moments* anytime — that part stays free.`;
     return pick(variants);
   },
 
-  // ── Daily prompt response ────────────────────────────────────────────────────
+  // ── Reaction only (emoji, short ack, ❤️, 👍, etc.) ────────────────────────────────
+  reaction_only: () => {
+    const variants = [
+      `💛`,
+      `🌱`,
+      `😊`,
+      `✨`,
+      `💛🌱`,
+    ];
+    return pick(variants);
+  },
+
+  // ── Evening nudge response ────────────────────────────────────────────────
+  evening_nudge_response: () => {
+    const variants = [
+      `That's all I needed to hear. 💛 Go enjoy that time — it's the best thing you can do tonight.`,
+      `🌱 That's the spirit. Even 15 minutes of real presence makes such a difference. Enjoy it.`,
+      `Love that. 💛 Those little pockets of time together are what they'll remember.`,
+      `😊 Go for it. Put the phone down, be with them. I'll be here when you're back.`,
+      `That's everything. 🌱 Connection is the whole thing — you've got this.`,
+      `Aww. 💛 That's what it's all about. Enjoy every second.`,
+    ];
+    return pick(variants);
+  },
+
+  // ── Open question response (parent shares a worry or question) ─────────────────
+  // Note: open_question_response with actual content will be routed to full AI.
+  // This template is only used if the AI is unavailable or the message is very short.
+  open_question_response: () => {
+    const variants = [
+      `Thank you for sharing that with me. 🌱 That kind of honesty takes courage. Let me think about this with you...`,
+      `I hear you. 💛 This is exactly the kind of thing worth talking through. Tell me a bit more if you can — I want to help properly.`,
+      `That's a real and important thing to sit with. 🌱 You're not alone in this. Let's talk it through.`,
+    ];
+    return pick(variants);
+  },
+
+  // ── Daily prompt response ────────────────────────────────────────────────
   daily_prompt_response: () => {
     const variants = [
       `Thank you for sharing that. 🌱 Every moment of noticing matters. You're doing beautifully. 💛`,
       `I love that you took a moment to notice. 💛 That awareness is one of the most powerful things a parent can offer. 🌱`,
       `That's wonderful. 🌱 The fact that you're paying attention says so much about the parent you are. 💛`,
       `Beautiful. 💛 Noticing is the first step to everything. You're building something meaningful, one moment at a time. 🌱`,
+      `That's the kind of thing that stays with a child. 🌱 Keep noticing — you're building something real. 💛`,
     ];
     return pick(variants);
   },
@@ -227,8 +265,29 @@ You can still log *unlimited child moments* anytime — that part stays free.`;
     ];
     return pick(variants);
   },
+  // ── Weekly open question (outbound, sent Tuesday morning) ────────────────────────
+  weekly_open_question: () => {
+    const variants = [
+      `Hey 🌱 Is there anything about your child that's been on your mind lately? Something you've been wondering about, or a moment that's been sitting with you? I'm here — no question is too small. 💛`,
+      `Good morning! ✨ Sometimes the questions we carry quietly are the most important ones. Is there anything about your child you've been wanting to talk through? I'm all ears. 🌱`,
+      `Hi there. 💛 This week's check-in: is there anything about your child that's been puzzling you, worrying you, or just making you curious? Share it with me — that's what I'm here for. 🌱`,
+      `A little check-in from Rootie 🌱 — how are things really going? Is there a behaviour, a phase, or a worry about your child you've been sitting with? You can always talk to me about it. 💛`,
+      `Morning! 😊 Sometimes parenting throws something at us that we're not sure how to handle. Is there anything like that on your mind right now? I'm here to help think it through. 🌱`,
+      `Hey 💛 — quick check-in. Is there anything about your child you've been wondering about this week? A question, a worry, or something you've noticed? I'd love to hear it. 🌱`,
+      `Good morning! 🌱 You don't need to have a big question to reach out. Even the small things — "why does my child do this?" or "is this normal?" — are worth talking about. What's on your mind? 💛`,
+      `Hi! ✨ Parenting is full of moments that make us go "hmm". Is there one of those moments you've had recently? I'm here to think it through with you. 🌱`,
+      `A gentle nudge from Rootie 🌱 — is there anything about your child that's been weighing on you, even just a little? Sometimes just naming it helps. I'm listening. 💛`,
+      `Morning! 💛 This week's open door: anything about your child you'd like to talk through? A phase they're going through, something they said, a behaviour you're not sure about? I'm here. 🌱`,
+      `Hey 🌱 — how's your child doing this week? And more importantly, how are *you* doing with it all? If anything's been on your mind, now's a good time to share. 💛`,
+      `Good morning! 😊 You know your child better than anyone. If something's felt a bit off, or you've been wondering about something, trust that instinct and bring it to me. What's on your mind? 🌱`,
+      `Hi there 💛 — sometimes the hardest part of parenting is not knowing if what you're seeing is "normal". Is there something like that you've been wondering about? I'm here to help. 🌱`,
+      `Morning! 🌱 A question I love asking: what's one thing about your child you'd love to understand better right now? Big or small, I'm here for it. 💛`,
+      `Hey ✨ — is there a parenting moment from this week you're still thinking about? Something that went well, something that didn't, or something you just weren't sure how to handle? Tell me. 🌱`,
+    ];
+    return pick(variants);
+  },
 
-  // ── Non-text message ─────────────────────────────────────────────────────────
+  // ── Non-text message ───────────────────────────────────────────────────────────────────
   non_text: () => {
     const variants = [
       `I can only read text messages for now. 😊 Please type your message and I'll help!`,
