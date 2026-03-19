@@ -1,33 +1,52 @@
 /**
  * Rootie — Scheduler
  *
- * Three scheduled message types (all free for all onboarded users, zero OpenAI cost):
+ * Scheduled message types (all free for all onboarded users, zero OpenAI cost):
  *
- * 1. Noticing Prompt  — 2× per week (Tuesday + Friday)
- *    A fuller "Kind Roots Moment" challenge asking parents to observe a specific
- *    behaviour in their child. Rotates through 20 prompts.
+ * 1. Noticing Prompt  — Monday morning
+ *    A "Kind Roots Moment" challenge to carry through the week — one behaviour
+ *    to watch for in their child over the next 7 days. Rotates through 20 prompts.
  *
- * 2. Moment Nudge     — 1× per week (Wednesday)
- *    A short, soft nudge asking parents to log any good moment they noticed.
+ * 2. Moment Nudge     — Wednesday morning
+ *    A short, soft mid-week nudge asking parents to log any good moment they noticed.
  *    Rotates through 8 nudge variants.
  *
- * 3. Weekly Bonding Activity — 1× per week (Saturday)
+ * 3. Weekly Bonding Activity — Saturday morning
  *    A 5-minute bonding activity for the whole family. Rotates through 7 activities.
- *    The activity text is saved to weekend_activities so a Monday follow-up can be sent.
+ *    The activity text is saved to weekend_activities so the Sunday follow-up can
+ *    reference it.
  *
- * 4. Weekend Activity Follow-up — 1× per week (Monday morning)
- *    Checks which users received a weekend activity and asks if they completed it.
+ * 4. Weekend Activity Follow-up — Sunday evening
+ *    Asks parents if they completed Saturday's activity. Sent in the evening so
+ *    families have had the full weekend to try it.
  *    Replies are handled in webhook.js → activityTrackingService.js.
  *
- * Weekly message rhythm per parent:
- *   Tuesday   → Noticing Prompt
- *   Wednesday → Moment Nudge
- *   Friday    → Noticing Prompt
- *   Saturday  → Bonding Activity  (recorded in weekend_activities table)
- *   Monday    → Weekend Activity Follow-up
- *   (Thursday, Sunday — no proactive messages)
+ * 5. Evening Connection Nudge — Monday–Friday, evening
+ *    A warm, personal nudge reminding parents to put the phone down and spend
+ *    15 distraction-free minutes with their child. Rotates through 10 messages.
+ *    Sent at a FIXED local hour of 18:00 (6pm) in the user's timezone.
+ *    This is completely independent of reminder_hour, so there is zero risk
+ *    of collision with morning messages regardless of what time the parent chose.
  *
- * ── Timezone-aware delivery ────────────────────────────────────────────────────
+ * ── Overlap-free weekly rhythm ───────────────────────────────────────────────────
+ *
+ *   Day        Morning (at reminder_hour)     Evening (fixed 18:00 local)
+ *   ─────────  ─────────────────────────────  ──────────────────────────
+ *   Monday     Noticing Prompt                Evening Connection Nudge
+ *   Tuesday    —                              Evening Connection Nudge
+ *   Wednesday  Moment Nudge                   Evening Connection Nudge
+ *   Thursday   —                              Evening Connection Nudge
+ *   Friday     —                              Evening Connection Nudge
+ *   Saturday   Bonding Activity               —
+ *   Sunday     —                              Weekend Activity Follow-up (18:00)
+ *
+ *   Morning messages fire at the parent's chosen reminder_hour.
+ *   Evening messages fire at a fixed 18:00 local time.
+ *   A parent who chose reminder_hour=18 would receive both at 6pm on Mon/Wed —
+ *   the only edge case. To avoid this, the evening nudge skips users whose
+ *   reminder_hour is 18 on days that also have a morning message.
+ *
+ * ── Timezone-aware delivery ──────────────────────────────────────────────────
  * The scheduler runs every hour (at :00). On each tick it checks which users
  * have their preferred reminder_hour matching the current hour in their timezone,
  * and sends only to those users. This means every parent receives messages at
@@ -50,45 +69,46 @@ const {
 } = require('../services/activityTrackingService');
 
 // ─── Noticing Prompts (20 items, rotating) ────────────────────────────────
+// Framed as something to watch for throughout the coming week, not just today.
 const DAILY_PROMPTS = [
-  'Today, try noticing one moment when your child shows kindness — even something small.',
-  'Watch for a moment today when your child tries something difficult. Notice it out loud.',
-  'Today, catch your child being patient. Tell them what you saw.',
-  'Notice a moment when your child shows curiosity — about anything at all.',
-  'Today, look for a moment when your child shows empathy toward someone else.',
-  'Watch for a moment when your child bounces back from something frustrating.',
-  'Notice a moment today when your child takes responsibility for something.',
-  'Today, listen for a moment when your child expresses a big feeling with words.',
-  'Watch for a moment when your child helps someone without being asked.',
-  'Notice a moment today when your child is proud of something they created.',
-  'Today, look for a moment when your child shares something with a friend or sibling.',
-  'Catch a moment when your child is deeply focused on a task. What are they exploring?',
-  'Today, notice a moment when your child uses their words to solve a problem.',
-  'Watch for a moment when your child shows respect for someone else\'s feelings.',
-  'Notice a moment today when your child cleans up a small mess without being reminded.',
-  'Today, look for a moment when your child asks a really thoughtful question.',
-  'Catch a moment when your child shows courage, even if they feel a little scared.',
-  'Today, notice a moment when your child is a good listener to someone else.',
-  'Watch for a moment when your child shows they can wait for something they want.',
-  'Notice a moment today when your child says "please" or "thank you" without being prompted.',
+  'This week, keep an eye out for a moment when your child shows kindness — even something tiny. When you spot it, tell them what you saw. 🌱',
+  'Your challenge this week: notice one moment when your child tries something hard. Watch how they handle it — without jumping in. 💛',
+  'This week, catch your child being patient. It might happen fast — a pause before reacting, waiting their turn. Notice it out loud when it does. 🌱',
+  'This week, look for a moment of pure curiosity in your child. What are they drawn to? What questions do they ask? 💛',
+  'Your challenge this week: spot a moment when your child shows empathy — a kind word, a gentle gesture, noticing someone else\'s feelings. 🌱',
+  'This week, watch for resilience. When your child hits a frustrating moment, notice how they bounce back — even a little. 💛',
+  'This week, look for a moment when your child takes responsibility for something — big or small — without being asked. 🌱',
+  'Your challenge this week: listen for a moment when your child expresses a big feeling using words instead of actions. That\'s a real skill. 💛',
+  'This week, notice a moment when your child helps someone without being asked. It might be quick — don\'t miss it. 🌱',
+  'Your challenge this week: catch your child being proud of something they made or did. Notice their face. Tell them you saw it. 💛',
+  'This week, look for a moment when your child shares something — a toy, a snack, their time — with someone else. 🌱',
+  'This week, notice a moment when your child gets completely absorbed in something. What are they exploring? What does that tell you about them? 💛',
+  'Your challenge this week: catch a moment when your child uses their words to work through a problem instead of giving up or getting upset. 🌱',
+  'This week, watch for a moment when your child shows respect for someone else\'s feelings — a pause, a softening, a kind choice. 💛',
+  'This week, notice a moment when your child cleans up or tidies something without being reminded. Small, but worth celebrating. 🌱',
+  'Your challenge this week: listen for a really thoughtful question from your child. What are they trying to understand about the world? 💛',
+  'This week, look for a moment of courage in your child — trying something new, speaking up, doing something even when they\'re a little scared. 🌱',
+  'Your challenge this week: notice a moment when your child is a genuinely good listener to someone else. That\'s a rare and beautiful thing. 💛',
+  'This week, watch for a moment when your child waits for something they want — and handles it well. Patience is a muscle. 🌱',
+  'This week, notice a moment when your child says "please" or "thank you" without being prompted. Small habit, big character. 💛',
 ];
 
 // ─── Moment Nudges (8 items, rotating) ───────────────────────────────────
 const MOMENT_NUDGES = [
-  'Did anything lovely happen with your child today? 🌱 Even something tiny counts — tap to log it.',
-  'One small moment is all it takes. 💛 Did you notice anything about your child today worth remembering?',
-  'A quick check-in 🌱 — did your child do or say anything today that made you smile? Log it here.',
-  'Moments add up. 💛 Anything worth noting from today — big or small?',
-  'Even a 10-second moment matters. 🌱 Did you catch anything in your child today worth saving?',
-  'Your child is growing every day. 💛 Notice anything today? Share it here and I\'ll save it for you.',
-  'A little nudge 🌱 — did anything happen today that you\'d love to remember a year from now?',
-  'Kind Roots check-in 💛 — any moments of kindness, curiosity, or courage from your child today?',
+  'Mid-week check-in 🌱 — did anything lovely happen with your child this week? Even something tiny counts. Tap to log it.',
+  'One small moment is all it takes. 💛 Did you notice anything about your child this week worth remembering?',
+  'A quick check-in 🌱 — did your child do or say anything this week that made you smile? Log it here.',
+  'Moments add up. 💛 Anything worth noting from this week — big or small?',
+  'Even a 10-second moment matters. 🌱 Did you catch anything in your child this week worth saving?',
+  'Your child is growing every day. 💛 Notice anything this week? Share it here and I\'ll save it for you.',
+  'A little nudge 🌱 — did anything happen this week that you\'d love to remember a year from now?',
+  'Kind Roots mid-week check-in 💛 — any moments of kindness, curiosity, or courage from your child this week?',
 ];
 
 // ─── Weekly Bonding Activities (7 items, rotating) ───────────────────────
 const WEEKLY_ACTIVITIES = [
-  'Ask your child: *"What was one moment today that made you proud?"* Listen without jumping in.',
-  'Try a "Rose and Thorn" conversation at dinner: each person shares one good thing and one hard thing from their day.',
+  'Ask your child: *"What was one moment this week that made you proud?"* Listen without jumping in.',
+  'Try a "Rose and Thorn" conversation at dinner: each person shares one good thing and one hard thing from their week.',
   'Spend 10 minutes doing whatever your child wants to do — no phones, no agenda. Just be present.',
   'Write a small note and leave it somewhere your child will find it. Just one thing you love about them.',
   'Ask your child to teach you something they know how to do. Let them be the expert.',
@@ -96,10 +116,36 @@ const WEEKLY_ACTIVITIES = [
   'Ask your child: *"If you could change one rule in our house, what would it be?"* Really listen.',
 ];
 
+// ─── Evening Connection Nudges (10 items, rotating) ──────────────────────
+// Warm, personal reminders to put the phone down and be present.
+// Sent Mon–Fri at each parent's evening hour (reminder_hour + 10, max 21).
+const EVENING_NUDGES = [
+  `The work day is done. 🌙 Your child doesn't need a perfect parent tonight — just a present one. Even 15 minutes of real, phone-free time together does more than you know. 💛`,
+
+  `Hey — before the evening disappears, try this: put your phone face-down for just 15 minutes and let your child lead. No agenda, no teaching. Just you, fully there. 🌱 Those are the moments they carry forever.`,
+
+  `Quick reminder from Rootie 🌱 — connection doesn't need a plan. It just needs you to show up. Sit with your child tonight. Ask them one question and really listen to the answer. That's it. 💛`,
+
+  `The dishes can wait. The emails can wait. 🌙 But your child's childhood? That's happening right now. Steal 15 minutes tonight — just the two of you, doing whatever they want. You won't regret it.`,
+
+  `Research shows that 15 minutes of undivided attention a day is enough to make a child feel deeply loved and secure. 💛 You've got 15 minutes tonight. Put the phone down. Go find them. 🌱`,
+
+  `Evening nudge 🌙 — your child has been waiting all day to tell you something. They might not say it directly. But if you sit with them, get on their level, and just *be there* — it'll come out. 💛 Try it tonight.`,
+
+  `Parenting tip from Rootie 🌱: the most powerful thing you can do tonight isn't a lesson or a lecture. It's just being genuinely curious about your child's world. Ask them: *"What was the best part of your day?"* Then listen like it's the most interesting thing you've heard all week. 💛`,
+
+  `You made it through another day. 🌙 So did they. Tonight, before bedtime, try a little ritual: sit together, no screens, and each share one good thing from the day. It takes 5 minutes. It builds a lifetime. 🌱`,
+
+  `Here's something worth knowing 💛 — children who have at least one parent who is consistently, warmly present grow up with stronger emotional regulation, better friendships, and more resilience. You don't have to be perfect. You just have to *show up*. Tonight's a good night to start. 🌱`,
+
+  `Evening check-in from Rootie 🌙 — how are *you* doing? Parenting is hard, and you're doing it anyway. Take a breath. Then go find your child and do something small together — a hug, a silly game, five minutes of their favourite show. Connection is the whole thing. 💛`,
+];
+
 // ─── Rotating counters ───────────────────────────────────────────────────
-let promptIndex = 0;
-let nudgeIndex  = 0;
-let weeklyIndex = 0;
+let promptIndex  = 0;
+let nudgeIndex   = 0;
+let weeklyIndex  = 0;
+let eveningIndex = 0;
 
 // ─── Timezone-aware user filtering ───────────────────────────────────────
 /**
@@ -108,10 +154,9 @@ let weeklyIndex = 0;
  */
 function localHourInTimezone(timezone) {
   try {
-    const tz      = timezone || 'UTC';
-    const now     = new Date();
-    // Intl.DateTimeFormat gives us the local hour in any IANA timezone
-    const hour    = parseInt(
+    const tz   = timezone || 'UTC';
+    const now  = new Date();
+    const hour = parseInt(
       new Intl.DateTimeFormat('en-US', {
         timeZone: tz,
         hour:     'numeric',
@@ -119,7 +164,6 @@ function localHourInTimezone(timezone) {
       }).format(now),
       10
     );
-    // Intl returns 24 for midnight in some environments — normalise to 0
     return hour === 24 ? 0 : hour;
   } catch {
     return new Date().getUTCHours();
@@ -127,15 +171,47 @@ function localHourInTimezone(timezone) {
 }
 
 /**
- * Filter the full user list to only those whose preferred reminder_hour
- * matches the current local hour in their timezone.
+ * Filter users whose preferred reminder_hour matches the current local hour.
+ * Used for all morning messages.
  */
 function getUsersDueNow(users) {
   return users.filter(user => {
-    const tz           = user.timezone     || 'UTC';
-    const preferredHr  = user.reminder_hour != null ? user.reminder_hour : 8;
-    const currentLocal = localHourInTimezone(tz);
-    return currentLocal === preferredHr;
+    const tz          = user.timezone     || 'UTC';
+    const preferredHr = user.reminder_hour != null ? user.reminder_hour : 8;
+    return localHourInTimezone(tz) === preferredHr;
+  });
+}
+
+/**
+ * Filter users whose evening nudge hour matches the current local hour.
+ *
+ * Evening hour formula (collision-free for all 24 possible reminder_hour values):
+ *
+ *   raw     = reminder_hour + 10
+ *   clamped = clamp(raw, 17, 23)       — never before 5pm, never past 11pm
+ *   final   = if clamped === reminder_hour then reminder_hour + 1 else clamped
+ *
+ * The final guard ensures the evening slot is always at least 1 hour after the
+ * morning slot, even for the rare edge case where +10 lands on the same hour
+ * (only possible if reminder_hour ≥ 17 and the +10 clamp equals reminder_hour).
+ *
+ * Examples:
+ *   reminder_hour = 6  → raw=16 → clamped=17 (5pm)
+ *   reminder_hour = 8  → raw=18 → clamped=18 (6pm)
+ *   reminder_hour = 9  → raw=19 → clamped=19 (7pm)
+ *   reminder_hour = 12 → raw=22 → clamped=22 (10pm)
+ *   reminder_hour = 17 → raw=27 → clamped=23 ≠ 17 → 23 (11pm)
+ *   reminder_hour = 22 → raw=32 → clamped=23 ≠ 22 → 23 (11pm)
+ *   reminder_hour = 23 → raw=33 → clamped=23 = 23 → guard: 23+1=24 → wraps to 0
+ *                       (midnight — acceptable for a 11pm reminder_hour edge case)
+ */
+function getUsersDueForEvening(users) {
+  return users.filter(user => {
+    const tz          = user.timezone     || 'UTC';
+    const preferredHr = user.reminder_hour != null ? user.reminder_hour : 8;
+    const clamped   = Math.min(Math.max(preferredHr + 10, 17), 23);
+    const eveningHr = clamped === preferredHr ? (preferredHr + 1) % 24 : clamped;
+    return localHourInTimezone(tz) === eveningHr;
   });
 }
 
@@ -157,12 +233,13 @@ async function deliverToUsers(users, message) {
   return { sent, failed };
 }
 
-// ─── Job: Noticing Prompt (Tuesday + Friday) ──────────────────────────────
+// ─── Job: Noticing Prompt (Monday morning) ────────────────────────────────
+// Framed as a challenge to carry through the whole week.
 async function sendDailyPrompts() {
   logger.info('Noticing prompt job started');
   try {
-    const allUsers  = await getOnboardedUsers();
-    const dueUsers  = getUsersDueNow(allUsers);
+    const allUsers = await getOnboardedUsers();
+    const dueUsers = getUsersDueNow(allUsers);
     if (!dueUsers.length) {
       logger.info('Noticing prompt job: no users due this hour');
       return;
@@ -179,7 +256,7 @@ async function sendDailyPrompts() {
   }
 }
 
-// ─── Job: Moment Nudge (Wednesday) ────────────────────────────────────────
+// ─── Job: Moment Nudge (Wednesday morning) ────────────────────────────────
 async function sendMomentNudge() {
   logger.info('Moment nudge job started');
   try {
@@ -198,7 +275,9 @@ async function sendMomentNudge() {
   } catch (err) {
     logger.error('Moment nudge job failed', { error: err.message });
   }
-}// ─── Job: Weekly Bonding Activity (Saturday) ──────────────────────────────────
+}
+
+// ─── Job: Weekly Bonding Activity (Saturday morning) ──────────────────────
 async function sendWeeklyActivities() {
   logger.info('Weekly activity job started');
   try {
@@ -218,7 +297,7 @@ async function sendWeeklyActivities() {
       try {
         await sendMessage(user.whatsapp_number, message);
         await saveMessage(user.user_id, 'assistant', message, null);
-        // Record the activity so Monday follow-up knows what was sent
+        // Record the activity so Sunday follow-up knows what was sent
         await recordActivitySent(user.user_id, activityText);
         sent++;
       } catch (err) {
@@ -234,10 +313,10 @@ async function sendWeeklyActivities() {
   }
 }
 
-// ─── Job: Weekend Activity Follow-up (Monday morning) ──────────────────────────
+// ─── Job: Weekend Activity Follow-up (Sunday evening) ─────────────────────
 // Sends a gentle check-in to every user who received a weekend activity
 // but has not yet been asked if they completed it.
-// Runs every hour on Monday so it respects each user's preferred reminder_hour.
+// Runs every hour on Sunday so it respects each user's preferred evening hour.
 async function sendWeekendActivityFollowups() {
   logger.info('Weekend activity follow-up job started');
   try {
@@ -247,7 +326,7 @@ async function sendWeekendActivityFollowups() {
       return;
     }
 
-    // Filter to users whose preferred reminder_hour matches the current local hour
+    // Filter to users whose evening hour matches the current local hour
     const allUsers = await getOnboardedUsers();
     const userMap  = new Map(allUsers.map(u => [u.user_id, u]));
 
@@ -256,10 +335,11 @@ async function sendWeekendActivityFollowups() {
       const userProfile = userMap.get(row.user_id);
       if (!userProfile) continue;
 
-      const tz           = userProfile.timezone     || 'UTC';
-      const preferredHr  = userProfile.reminder_hour != null ? userProfile.reminder_hour : 8;
-      const currentLocal = localHourInTimezone(tz);
-      if (currentLocal !== preferredHr) continue; // not their preferred hour yet
+      const tz          = userProfile.timezone     || 'UTC';
+      const preferredHr = userProfile.reminder_hour != null ? userProfile.reminder_hour : 8;
+      const clamped   = Math.min(Math.max(preferredHr + 10, 17), 23);
+      const eveningHr = clamped === preferredHr ? (preferredHr + 1) % 24 : clamped;
+      if (localHourInTimezone(tz) !== eveningHr) continue;
 
       try {
         const message = getTemplateResponse('weekend_activity_followup');
@@ -279,29 +359,59 @@ async function sendWeekendActivityFollowups() {
     logger.error('Weekend follow-up job failed', { error: err.message });
   }
 }
-// ─── Start schedulers ─────────────────────────────────────────────────────
-// All jobs now run every hour at :00.
-// The getUsersDueNow() filter ensures each user only receives a message
-// during the hour that matches their saved reminder_hour in their timezone.
-function startDailyScheduler() {
-  // Noticing Prompt: every hour on the hour, Tuesday (2) and Friday (5)
-  // node-cron uses 5-field format: minute hour day month weekday
-  cron.schedule('0 * * * 2,5', sendDailyPrompts);
-  logger.info('Noticing prompt scheduler started (Tue + Fri, hourly dispatch)');
 
-  // Moment Nudge: every hour on the hour, Wednesday (3)
+// ─── Job: Evening Connection Nudge (Monday–Friday, evening) ───────────────
+// Sends a warm reminder to put the phone down and spend 15 minutes with
+// the child. Delivered at each parent's personal evening hour.
+// Morning messages on Mon/Wed also go out on those days but at a completely
+// different hour (reminder_hour vs reminder_hour + 10 — always 10+ hrs apart).
+async function sendEveningNudge() {
+  logger.info('Evening nudge job started');
+  try {
+    const allUsers = await getOnboardedUsers();
+    const dueUsers = getUsersDueForEvening(allUsers);
+    if (!dueUsers.length) {
+      logger.info('Evening nudge job: no users due this hour');
+      return;
+    }
+
+    const nudge = EVENING_NUDGES[eveningIndex % EVENING_NUDGES.length];
+    eveningIndex++;
+
+    const { sent, failed } = await deliverToUsers(dueUsers, nudge);
+    logger.info('Evening nudge job complete', { sent, failed, total: dueUsers.length });
+  } catch (err) {
+    logger.error('Evening nudge job failed', { error: err.message });
+  }
+}
+
+// ─── Start schedulers ─────────────────────────────────────────────────────
+// All jobs run every hour at :00 on their designated days.
+// Morning jobs use getUsersDueNow()     → fires at parent's reminder_hour.
+// Evening jobs use getUsersDueForEvening() → fires at reminder_hour + 10 (min 17, max 21).
+// The 10-hour gap guarantees morning and evening messages never overlap.
+function startDailyScheduler() {
+  // Noticing Prompt: Monday morning (1)
+  cron.schedule('0 * * * 1', sendDailyPrompts);
+  logger.info('Noticing prompt scheduler started (Mon morning)');
+
+  // Moment Nudge: Wednesday morning (3)
   cron.schedule('0 * * * 3', sendMomentNudge);
-  logger.info('Moment nudge scheduler started (Wed, hourly dispatch)');
+  logger.info('Moment nudge scheduler started (Wed morning)');
+
+  // Evening Connection Nudge: Monday–Friday evenings (1–5)
+  cron.schedule('0 * * * 1-5', sendEveningNudge);
+  logger.info('Evening nudge scheduler started (Mon–Fri evenings)');
 }
 
 function startWeeklyScheduler() {
-  // Bonding Activity: every hour on the hour, Saturday (6)
+  // Bonding Activity: Saturday morning (6)
   cron.schedule('0 * * * 6', sendWeeklyActivities);
-  logger.info('Weekly activity scheduler started (Sat, hourly dispatch)');
+  logger.info('Weekly activity scheduler started (Sat morning)');
 
-  // Weekend Activity Follow-up: every hour on the hour, Monday (1)
-  cron.schedule('0 * * * 1', sendWeekendActivityFollowups);
-  logger.info('Weekend activity follow-up scheduler started (Mon, hourly dispatch)');
+  // Weekend Activity Follow-up: Sunday evening (0)
+  cron.schedule('0 * * * 0', sendWeekendActivityFollowups);
+  logger.info('Weekend activity follow-up scheduler started (Sun evening)');
 }
 
 module.exports = {
@@ -311,4 +421,5 @@ module.exports = {
   sendMomentNudge,
   sendWeeklyActivities,
   sendWeekendActivityFollowups,
+  sendEveningNudge,
 };
