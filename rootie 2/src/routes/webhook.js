@@ -168,6 +168,33 @@ router.post('/', async (req, res) => {
 
     // Get or create user, then update last_active_date
     const user = await getOrCreateUser(phoneNumber);
+
+    // ── Return greeting (24 h+ absence) ────────────────────────────────────
+    // Check BEFORE updating last_active_date so we can compare the stored date.
+    // Only greet fully onboarded users who haven't messaged in over a day.
+    let returnGreeting = null;
+    if (user.onboarding_complete && user.last_active_date) {
+      const lastActive = new Date(user.last_active_date);
+      const today      = new Date();
+      // Strip time component for a clean day-level comparison
+      lastActive.setHours(0, 0, 0, 0);
+      today.setHours(0, 0, 0, 0);
+      const daysSince = Math.floor((today - lastActive) / (1000 * 60 * 60 * 24));
+
+      if (daysSince >= 1) {
+        const name = user.parent_name || 'there';
+        const greetings = [
+          `Hey ${name}! 🌱 Good to hear from you. What's on your mind?`,
+          `Welcome back, ${name}! 💛 How have things been with the kids?`,
+          `${name}! 🌱 Nice to see you again. What's been happening?`,
+          `Hey ${name}, good to have you back. 😊 Anything you want to share or ask?`,
+          `Hi ${name}! 🌱 Missed you. How are things going at home?`,
+        ];
+        returnGreeting = greetings[Math.floor(Math.random() * greetings.length)];
+        logger.info('Return greeting triggered', { userId: user.user_id, daysSince });
+      }
+    }
+
     // Fire-and-forget — don't block the pipeline
     updateLastActive(user.user_id).catch(err =>
       logger.warn('Failed to update last_active_date', { error: err.message })
@@ -269,7 +296,16 @@ router.post('/', async (req, res) => {
       await incrementMessages(user.user_id);
       return;
     }
-    // ── Step 1: Classify the message ────────────────────────────────────────
+
+    // ── Return greeting ──────────────────────────────────────────────────────────
+    // Send the warm greeting as a separate message before the main reply.
+    // This way the parent sees "Hey Priya! 🌱 ..." followed by the actual response.
+    if (returnGreeting) {
+      await sendMessage(phoneNumber, returnGreeting);
+      await saveMessage(user.user_id, 'assistant', returnGreeting, null);
+    }
+
+    // ── Step 1: Classify the message ─────────────────────────────────────────────────
     const children   = await getChildrenByUserId(user.user_id);
     const freshUser  = await getUserByPhone(phoneNumber);
     const classified = await classifyMessage(messageText, children);
