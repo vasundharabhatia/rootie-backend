@@ -410,6 +410,18 @@ case 'free_limit_repeat_plus_interest':
     case 'upgrade':
       return TEMPLATES.upgrade_coming_soon();
 
+    case 'weekly_open_question':
+      return TEMPLATES.weekly_open_question();
+
+    case 'reaction_only':
+      return TEMPLATES.reaction_only();
+
+    case 'evening_nudge_response':
+      return TEMPLATES.evening_nudge_response();
+
+    case 'open_question_response':
+      return TEMPLATES.open_question_response();
+
     default:
       return null; // caller should fall back to full AI
   }
