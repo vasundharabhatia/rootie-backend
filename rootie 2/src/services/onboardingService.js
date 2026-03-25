@@ -523,9 +523,12 @@ What's your name? 😊`,
         const freshUser = await getUserByPhone(user.whatsapp_number);
         return (
           `You're all set, *${freshUser?.parent_name || 'there'}*! 🌟\n\n` +
-          `I'll send you little thoughts and activities around *${displayHour}* your time. ` +
-          `You can message me to change it any time.\n\n` +
-          `To get started, try sharing a small, positive moment you noticed in your child today. 💛`
+          `I'll send you a little thought or activity around *${displayHour}* your time — you can change that any time.\n\n` +
+          `Here's what I can do for you:\n` +
+          `• 📝 *Log moments* — share a small positive thing you noticed in your child and I'll save it to their story\n` +
+          `• 💬 *Answer questions* — ask me anything about parenting, child behaviour, or development\n` +
+          `• 🌱 *Send weekly prompts* — I'll nudge you with things to notice, try, and reflect on\n\n` +
+          `What's on your mind? You can ask me a question, or share a moment you noticed today. 💛`
         );
       }
 
@@ -582,9 +585,12 @@ What's your name? 😊`,
 
       return (
         `You're all set, *${freshUser?.parent_name || 'there'}*! 🌟\n\n` +
-        `I'll send you little thoughts and activities around *${dh}* your time. ` +
-        `You can message me to change it any time.\n\n` +
-        `To get started, try sharing a small, positive moment you noticed in your child today. 💛`
+        `I'll send you a little thought or activity around *${dh}* your time — you can change that any time.\n\n` +
+        `Here's what I can do for you:\n` +
+        `• 📝 *Log moments* — share a small positive thing you noticed in your child and I'll save it to their story\n` +
+        `• 💬 *Answer questions* — ask me anything about parenting, child behaviour, or development\n` +
+        `• 🌱 *Send weekly prompts* — I'll nudge you with things to notice, try, and reflect on\n\n` +
+        `What's on your mind? You can ask me a question, or share a moment you noticed today. 💛`
       );
     }
 
