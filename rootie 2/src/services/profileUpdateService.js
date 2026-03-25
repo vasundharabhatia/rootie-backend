@@ -197,11 +197,16 @@ function parseHour(text) {
   const match = t.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/);
   if (!match) return null;
 
-  let hour = parseInt(match[1], 10);
+  let hour   = parseInt(match[1], 10);
+  const mins = match[2] ? parseInt(match[2], 10) : 0;
   const ampm = match[3];
 
   if (ampm === 'pm' && hour < 12) hour += 12;
   if (ampm === 'am' && hour === 12) hour = 0;
+
+  // Round to nearest whole hour so it aligns with the hourly scheduler
+  if (mins >= 30) hour += 1;
+  if (hour > 23) hour = 0; // midnight wrap
   if (hour < 0 || hour > 23) return null;
 
   return hour;
@@ -339,16 +344,49 @@ async function handleProfileView(user, messageText) {
     );
   }
 
-  const childrenLine = activeChildren.length
-    ? activeChildren.map(c => `${c.child_name} (${formatBirthdayDisplay(c)})`).join(', ')
-    : 'No active children saved yet';
+  // Build a rich per-child block
+  function buildChildBlock(c) {
+    const age = deriveAge(c);
+    const ageLine = age != null ? `Age: *${age}*` : null;
+    const dobLine = c.child_dob || c.birth_year
+      ? `Birthday: *${formatBirthdayDisplay(c)}*`
+      : null;
+    const traits = [
+      c.temperament      ? `Temperament: *${c.temperament}*`       : null,
+      c.sensitivity_level ? `Sensitivity: *${c.sensitivity_level}*` : null,
+      c.social_style     ? `Social style: *${c.social_style}*`     : null,
+      c.strengths        ? `Strengths: *${c.strengths}*`           : null,
+      c.challenges       ? `Challenges: *${c.challenges}*`         : null,
+    ].filter(Boolean);
+
+    const lines = [
+      `👶 *${c.child_name}*`,
+      ageLine,
+      dobLine,
+      ...traits,
+    ].filter(Boolean);
+
+    return lines.join('\n');
+  }
+
+  const childrenSection = activeChildren.length
+    ? activeChildren.map(buildChildBlock).join('\n\n')
+    : 'No active children saved yet.';
+
+  const archivedNote = archivedChildren.length
+    ? `\n\n_${archivedChildren.length} archived child${archivedChildren.length > 1 ? 'ren' : ''} not shown. Reply *show my family* to see all._`
+    : '';
 
   return (
     `Here's your profile 💛\n\n` +
-    `• Name: *${user.parent_name || 'Not set'}*\n` +
-    `• Children: *${childrenLine}*\n` +
-    `• Reminder time: *${formatHour(user.reminder_hour ?? 8)}*\n` +
-    `• Timezone: *${user.timezone || 'UTC'}*`
+    `👤 *Parent*\n` +
+    `Name: *${user.parent_name || 'Not set'}*\n` +
+    `Reminder time: *${formatHour(user.reminder_hour ?? 8)}*\n` +
+    `Timezone: *${user.timezone || 'UTC'}*\n` +
+    `Plan: *${user.plan_type || 'free'}*\n\n` +
+    `👨‍👩‍👧 *Children*\n` +
+    childrenSection +
+    archivedNote
   );
 }
 

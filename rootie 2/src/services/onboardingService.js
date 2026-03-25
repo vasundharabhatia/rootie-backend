@@ -204,7 +204,9 @@ function resolveTimezoneFromText(text) {
 }
 
 /**
- * Parses a user's free-text time input into a 24-hour integer.
+ * Parses a user's free-text time input into a 24-hour integer (whole hour).
+ * If the user supplies minutes (e.g. "9:30am"), the result is rounded to the
+ * nearest whole hour so it aligns with the hourly scheduler.
  * @param {string} text
  * @returns {number|null}
  */
@@ -218,11 +220,16 @@ function parseHour(text) {
   const match = t.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/);
   if (!match) return null;
 
-  let hour   = parseInt(match[1], 10);
-  const ampm = match[3];
+  let hour    = parseInt(match[1], 10);
+  const mins  = match[2] ? parseInt(match[2], 10) : 0;
+  const ampm  = match[3];
 
   if (ampm === 'pm' && hour < 12) hour += 12;
   if (ampm === 'am' && hour === 12) hour = 0;
+
+  // Round to nearest whole hour
+  if (mins >= 30) hour += 1;
+  if (hour > 23) hour = 0;  // midnight wrap
   if (hour < 0 || hour > 23) return null;
 
   return hour;
@@ -505,6 +512,7 @@ What's your name? 😊`,
         `${hour - 12}:00 PM`;
 
       // Save the reminder hour now; timezone will be confirmed/set in step 55
+      // (parseHour already rounded to the nearest whole hour)
       await updateUser(user.whatsapp_number, { reminder_hour: hour });
 
       // High-confidence guess → save timezone silently and complete onboarding
