@@ -1,0 +1,2 @@
+{"foo":"bar","level":"info","message":"Test log message","timestamp":"2026-03-31 05:04:16"}
+{"error":"something went wrong","level":"error","message":"Test error message","timestamp":"2026-03-31 05:04:16"}

@@ -17,6 +17,7 @@
  * POST /admin/trigger/evening-nudge       — manually trigger evening connection nudge (Mon–Fri)
  * POST /admin/trigger/weekend-followup    — manually trigger weekend activity follow-up (Sun)
  * POST /admin/trigger/custom-nudge        — send a one-time custom message to a specific user by ID
+ * GET  /admin/cron-logs                    — read recent cron diagnostic logs from the DB
  */
 
 const express    = require('express');
@@ -39,6 +40,7 @@ const { sendDailyPrompts,
         sendWeekendActivityFollowups } = require('../scheduler/index');
 const { sendMessage }               = require('../services/whatsappService');
 const { saveMessage }               = require('../services/conversationService');
+const { getCronLogs, isLoggingActive, minutesRemaining } = require('../services/cronLogService');
 
 // ─── Admin auth middleware ─────────────────────────────────────────────────
 function adminAuth(req, res, next) {
@@ -257,6 +259,25 @@ router.post('/trigger/custom-nudge', async (req, res) => {
   } catch (err) {
     logger.error('Custom nudge error', { error: err.message });
     res.status(500).json({ error: 'Failed to send custom nudge' });
+  }
+});
+
+// ─── GET /admin/cron-logs ─────────────────────────────────────────────────────────────────────────────────────
+// Returns recent cron job fire records from the DB.
+// Query params: ?limit=100 (default 100, max 500)
+router.get('/cron-logs', async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 100, 500);
+    const logs  = await getCronLogs(limit);
+    res.json({
+      logging_active: isLoggingActive(),
+      minutes_remaining: minutesRemaining(),
+      count: logs.length,
+      logs,
+    });
+  } catch (err) {
+    logger.error('Cron logs fetch error', { error: err.message });
+    res.status(500).json({ error: 'Failed to fetch cron logs' });
   }
 });
 

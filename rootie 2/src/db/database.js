@@ -1,7 +1,7 @@
 /**
  * Rootie — Database
  *
- * 5 tables, all created automatically on first startup.
+ * Tables created automatically on first startup:
  *
  * Tables:
  *   users              — one row per parent (WhatsApp number = primary identity)
@@ -11,6 +11,7 @@
  *   family_summary     — compact long-term memory (replaces full history in AI prompts)
  *   usage_tracking     — daily free-plan usage counters
  *   weekend_activities — record of every weekend activity sent and its completion status
+ *   cron_logs          — diagnostic log of every cron job fire (auto-expires after 4 hours)
  */
 
 const { Pool } = require('pg');
@@ -191,6 +192,22 @@ const SCHEMA = `
     ON user_flow_sessions (user_id);
   CREATE INDEX IF NOT EXISTS idx_user_flow_sessions_expires_at
     ON user_flow_sessions (expires_at);
+  -- ── Cron Diagnostic Logs ──────────────────────────────────────────────────────────────────────────────
+  -- One row per cron job fire. Stores per-user timezone diagnostics.
+  -- Logging is active only while cron_log_enabled = true in the app.
+  CREATE TABLE IF NOT EXISTS cron_logs (
+    log_id       SERIAL PRIMARY KEY,
+    fired_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    job_name     VARCHAR(60)  NOT NULL,
+    utc_time     VARCHAR(30)  NOT NULL,
+    total_users  SMALLINT     NOT NULL DEFAULT 0,
+    matched      SMALLINT     NOT NULL DEFAULT 0,
+    sent         SMALLINT,
+    failed       SMALLINT,
+    user_details JSONB,
+    notes        TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_cron_logs_fired_at ON cron_logs (fired_at DESC);
 `;
 
 
