@@ -59,6 +59,15 @@ async function updateLastActive(userId) {
   );
 }
 
+// ─── Get user by numeric ID ───────────────────────────────────────────────
+async function getUserById(userId) {
+  const result = await query(
+    `SELECT * FROM users WHERE user_id = $1 LIMIT 1`,
+    [userId]
+  );
+  return result.rows[0] || null;
+}
+
 // ─── Get all users (admin) ─────────────────────────────────────────────────────
 async function getAllUsers({ limit = 50, offset = 0 } = {}) {
   const result = await query(
@@ -73,6 +82,7 @@ async function getAllUsers({ limit = 50, offset = 0 } = {}) {
 module.exports = {
   getOrCreateUser,
   getUserByPhone,
+  getUserById,
   updateUser,
   getOnboardedUsers,
   updateLastActive,

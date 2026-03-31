@@ -16,6 +16,7 @@
  * POST /admin/trigger/weekly              — manually trigger weekly bonding activity (Sat)
  * POST /admin/trigger/evening-nudge       — manually trigger evening connection nudge (Mon–Fri)
  * POST /admin/trigger/weekend-followup    — manually trigger weekend activity follow-up (Sun)
+ * POST /admin/trigger/custom-nudge        — send a one-time custom message to a specific user by ID
  */
 
 const express    = require('express');
@@ -24,6 +25,7 @@ const { logger } = require('../utils/logger');
 const { query }  = require('../db/database');
 const { getAllUsers,
         getUserByPhone,
+        getUserById,
         updateUser }            = require('../services/userService');
 const { getChildrenByUserId }   = require('../services/childService');
 const { getRecentMomentsByUser }= require('../services/momentService');
@@ -35,6 +37,8 @@ const { sendDailyPrompts,
         sendWeeklyOpenQuestion,
         sendEveningNudge,
         sendWeekendActivityFollowups } = require('../scheduler/index');
+const { sendMessage }               = require('../services/whatsappService');
+const { saveMessage }               = require('../services/conversationService');
 
 // ─── Admin auth middleware ─────────────────────────────────────────────────
 function adminAuth(req, res, next) {
@@ -223,6 +227,36 @@ router.post('/trigger/weekend-followup', async (req, res) => {
   } catch (err) {
     logger.error('Manual weekend-followup trigger error', { error: err.message });
     res.status(500).json({ error: 'Failed to trigger weekend follow-up' });
+  }
+});
+
+// ─── POST /admin/trigger/custom-nudge ─────────────────────────────────────────────────────────────────────────────────────
+// Sends a one-time custom message to a specific user by their user_id.
+// Body: { user_id: number, message: string }
+router.post('/trigger/custom-nudge', async (req, res) => {
+  try {
+    const { user_id, message } = req.body;
+
+    if (!user_id || !message) {
+      return res.status(400).json({ error: 'user_id and message are required' });
+    }
+
+    const user = await getUserById(user_id);
+    if (!user) {
+      return res.status(404).json({ error: `User ${user_id} not found` });
+    }
+    if (!user.whatsapp_number) {
+      return res.status(400).json({ error: `User ${user_id} has no WhatsApp number` });
+    }
+
+    await sendMessage(user.whatsapp_number, message);
+    await saveMessage(user_id, 'assistant', message, null);
+
+    logger.info('Custom nudge sent', { userId: user_id, phone: user.whatsapp_number, message });
+    res.json({ success: true, sent_to: user.whatsapp_number, message });
+  } catch (err) {
+    logger.error('Custom nudge error', { error: err.message });
+    res.status(500).json({ error: 'Failed to send custom nudge' });
   }
 });
 
