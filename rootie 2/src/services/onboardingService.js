@@ -6,14 +6,17 @@
  * Temporary child data is stored in DB-backed flow sessions.
  *
  * Steps:
- *   0 → Welcome message, ask parent name
- *   1 → Save parent name, ask child name
- *   2 → Save child name, ask child age
- *   3 → Save child + age, ask optional personality description  ← NEW
- *   33→ (optional) AI extracts traits, saves them, ask "any more children?"
- *   4 → Ask "any more children?" (Yes → back to step 2, No → step 5)
- *   5 → Ask preferred reminder time
- *   6 → Onboarding complete
+ *   0  → Welcome message, ask parent name
+ *   1  → Save parent name, ask child name
+ *   2  → Save child name, ask child age
+ *   3  → Save child + age, ask optional personality description
+ *   33 → (optional) AI extracts traits, saves them, ask "any more children?"
+ *   4  → Ask "any more children?" (Yes → back to step 2, No → complete)
+ *   55 → Timezone confirmation (when phone-prefix guess was low/medium/null)
+ *   6  → Onboarding complete
+ *
+ * Scheduled messages fire at fixed times (10 AM morning, 6 PM evening) in
+ * each user's own timezone — no reminder_hour preference is collected.
  *
  * The personality step (3b) is optional — parents can skip it with "skip",
  * "later", or a blank reply. It does NOT block onboarding progress.
@@ -485,78 +488,56 @@ What's your name? 😊`,
       }
 
       if (['no', 'n'].includes(answer)) {
-        await updateUser(user.whatsapp_number, { onboarding_step: 5 });
+        // No reminder_hour needed — messages fire at fixed times.
+        // Detect timezone from phone prefix and complete or ask for city.
+        const guess = guessTimezone(user.whatsapp_number);
+
+        if (guess && guess.confidence === 'high') {
+          // High-confidence → save timezone silently and complete onboarding
+          await clearFlowSession(user.user_id);
+          await updateUser(user.whatsapp_number, {
+            onboarding_complete: true,
+            onboarding_step:     6,
+            timezone:            guess.tz,
+          });
+
+          logger.info('Onboarding complete (timezone auto-detected)', {
+            userId: user.user_id, timezone: guess.tz,
+          });
+
+          const freshUser = await getUserByPhone(user.whatsapp_number);
+          return (
+            `You're all set, *${freshUser?.parent_name || 'there'}*! 🌟\n\n` +
+            `I'll send you a little thought or activity a few times a week — ` +
+            `mornings at *10 AM* and evenings at *6 PM* your time.\n\n` +
+            `Here's what I can do for you:\n` +
+            `• 📝 *Log moments* — share a small positive thing you noticed in your child and I'll save it to their story\n` +
+            `• 💬 *Answer questions* — ask me anything about parenting, child behaviour, or development\n` +
+            `• 🌱 *Send weekly prompts* — I'll nudge you with things to notice, try, and reflect on\n\n` +
+            `What's on your mind? You can ask me a question, or share a moment you noticed today. 💛`
+          );
+        }
+
+        // Medium/low confidence or no match → ask for city/country
+        const guessLine = (guess && guess.confidence === 'medium')
+          ? `I think you might be in *${guess.tz.replace(/_/g, ' ')}* — is that right? `
+          : '';
+
+        await updateUser(user.whatsapp_number, { onboarding_step: 55 });
+
         return (
-          `Almost done! Last question. 🌱\n\n` +
-          `I'll send you a little thought or activity a few times a week.\n\n` +
-          `What time of day works best for you? (e.g. *8am*, *evening*)`
+          `Almost done! 🌱\n\n` +
+          `${guessLine}` +
+          `Just so I get the timing right — what city or country are you in? ` +
+          `(e.g. *New York*, *Sydney*, *Lagos*, *India*)\n\n` +
+          `_(Reply *skip* if you'd rather not share — I'll use a default)_`
         );
       }
 
       return `Please reply with *Yes* or *No* so I know whether to add another child. 🌱`;
     }
 
-    // ── Step 5: Reminder time ─────────────────────────────────────────────────
-    case 5: {
-      const hour   = parseHour(text);
-      const guess  = guessTimezone(user.whatsapp_number);
-
-      if (hour === null) {
-        return `I didn't quite catch that. 😊 Could you try a time like *8am*, *7:30pm*, or *morning*?`;
-      }
-
-      const displayHour =
-        hour === 0  ? '12:00 AM' :
-        hour < 12   ? `${hour}:00 AM` :
-        hour === 12 ? '12:00 PM' :
-        `${hour - 12}:00 PM`;
-
-      // Save the reminder hour now; timezone will be confirmed/set in step 55
-      // (parseHour already rounded to the nearest whole hour)
-      await updateUser(user.whatsapp_number, { reminder_hour: hour });
-
-      // High-confidence guess → save timezone silently and complete onboarding
-      if (guess && guess.confidence === 'high') {
-        await clearFlowSession(user.user_id);
-        await updateUser(user.whatsapp_number, {
-          onboarding_complete: true,
-          onboarding_step:     6,
-          timezone:            guess.tz,
-        });
-
-        logger.info('Onboarding complete (timezone auto-detected)', {
-          userId: user.user_id, timezone: guess.tz, reminderHour: hour,
-        });
-
-        const freshUser = await getUserByPhone(user.whatsapp_number);
-        return (
-          `You're all set, *${freshUser?.parent_name || 'there'}*! 🌟\n\n` +
-          `I'll send you a little thought or activity around *${displayHour}* your time — you can change that any time.\n\n` +
-          `Here's what I can do for you:\n` +
-          `• 📝 *Log moments* — share a small positive thing you noticed in your child and I'll save it to their story\n` +
-          `• 💬 *Answer questions* — ask me anything about parenting, child behaviour, or development\n` +
-          `• 🌱 *Send weekly prompts* — I'll nudge you with things to notice, try, and reflect on\n\n` +
-          `What's on your mind? You can ask me a question, or share a moment you noticed today. 💛`
-        );
-      }
-
-      // Medium/low confidence or no match → ask for city/country to confirm
-      const guessLine = (guess && guess.confidence === 'medium')
-        ? `I think you might be in *${guess.tz.replace('_', ' ')}* — is that right? `
-        : '';
-
-      await updateUser(user.whatsapp_number, { onboarding_step: 55 });
-
-      return (
-        `Got it — I'll send you messages around *${displayHour}*. 🌱\n\n` +
-        `${guessLine}` +
-        `Just so I get the timing right — what city or country are you in? ` +
-        `(e.g. *New York*, *Sydney*, *Lagos*, *India*)\n\n` +
-        `_(Reply *skip* if you'd rather not share — I'll use a default)_`
-      );
-    }
-
-    // ── Step 55: Timezone confirmation (when guess was low/medium/null) ───────
+    // ── Step 55: Timezone confirmation (when phone-prefix guess was low/medium/null) ──
     case 55: {
       let timezone = 'UTC';
 
@@ -581,19 +562,14 @@ What's your name? 😊`,
       });
 
       logger.info('Onboarding complete (timezone confirmed by user)', {
-        userId: user.user_id, timezone, reminderHour: user.reminder_hour,
+        userId: user.user_id, timezone,
       });
 
       const freshUser = await getUserByPhone(user.whatsapp_number);
-      const rh        = freshUser?.reminder_hour ?? 8;
-      const dh        = rh === 0  ? '12:00 AM' :
-                        rh < 12   ? `${rh}:00 AM` :
-                        rh === 12 ? '12:00 PM' :
-                        `${rh - 12}:00 PM`;
-
       return (
         `You're all set, *${freshUser?.parent_name || 'there'}*! 🌟\n\n` +
-        `I'll send you a little thought or activity around *${dh}* your time — you can change that any time.\n\n` +
+        `I'll send you a little thought or activity a few times a week — ` +
+        `mornings at *10 AM* and evenings at *6 PM* your time.\n\n` +
         `Here's what I can do for you:\n` +
         `• 📝 *Log moments* — share a small positive thing you noticed in your child and I'll save it to their story\n` +
         `• 💬 *Answer questions* — ask me anything about parenting, child behaviour, or development\n` +

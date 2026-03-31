@@ -3,57 +3,28 @@
  *
  * Scheduled message types (all free for all onboarded users, zero OpenAI cost):
  *
- * 1. Noticing Prompt  — Monday morning
- *    A "Kind Roots Moment" challenge to carry through the week — one behaviour
- *    to watch for in their child over the next 7 days. Rotates through 20 prompts.
+ * 1. Noticing Prompt       — Monday    10:00 AM (user's timezone)
+ * 2. Weekly Open Question  — Tuesday   10:00 AM (user's timezone)
+ * 3. Moment Nudge          — Wednesday 10:00 AM (user's timezone)
+ * 4. Weekly Bonding Activity — Saturday 10:00 AM (user's timezone)
+ * 5. Evening Connection Nudge — Mon–Fri 6:00 PM  (user's timezone)
+ * 6. Weekend Activity Follow-up — Sunday 6:00 PM (user's timezone)
  *
- * 2. Moment Nudge     — Wednesday morning
- *    A short, soft mid-week nudge asking parents to log any good moment they noticed.
- *    Rotates through 8 nudge variants.
+ * ── Fixed-time weekly rhythm ─────────────────────────────────────────────────
  *
- * 3. Weekly Bonding Activity — Saturday morning
- *    A 5-minute bonding activity for the whole family. Rotates through 7 activities.
- *    The activity text is saved to weekend_activities so the Sunday follow-up can
- *    reference it.
- *
- * 4. Weekend Activity Follow-up — Sunday evening
- *    Asks parents if they completed Saturday's activity. Sent in the evening so
- *    families have had the full weekend to try it.
- *    Replies are handled in webhook.js → activityTrackingService.js.
- *
- * 5. Evening Connection Nudge — Monday–Friday, evening
- *    A warm, personal nudge reminding parents to put the phone down and spend
- *    15 distraction-free minutes with their child. Rotates through 10 messages.
- *    Sent at a FIXED local hour of 18:00 (6pm) in the user's timezone.
- *    This is completely independent of reminder_hour, so there is zero risk
- *    of collision with morning messages regardless of what time the parent chose.
- *
- * ── Overlap-free weekly rhythm ───────────────────────────────────────────────────
- *
- *   Day        Morning (at reminder_hour)     Evening (fixed 18:00 local)
+ *   Day        10:00 AM (local)               6:00 PM (local)
  *   ─────────  ─────────────────────────────  ──────────────────────────
  *   Monday     Noticing Prompt                Evening Connection Nudge
- *   Tuesday    —                              Evening Connection Nudge
+ *   Tuesday    Weekly Open Question           Evening Connection Nudge
  *   Wednesday  Moment Nudge                   Evening Connection Nudge
  *   Thursday   —                              Evening Connection Nudge
  *   Friday     —                              Evening Connection Nudge
  *   Saturday   Bonding Activity               —
- *   Sunday     —                              Weekend Activity Follow-up (18:00)
+ *   Sunday     —                              Weekend Activity Follow-up
  *
- *   Morning messages fire at the parent's chosen reminder_hour.
- *   Evening messages fire at a fixed 18:00 local time.
- *   A parent who chose reminder_hour=18 would receive both at 6pm on Mon/Wed —
- *   the only edge case. To avoid this, the evening nudge skips users whose
- *   reminder_hour is 18 on days that also have a morning message.
- *
- * ── Timezone-aware delivery ──────────────────────────────────────────────────
+ * All times are fixed — no per-user reminder_hour preference is used.
  * The scheduler runs every hour (at :00). On each tick it checks which users
- * have their preferred reminder_hour matching the current hour in their timezone,
- * and sends only to those users. This means every parent receives messages at
- * the time they chose during onboarding, regardless of where they are in the world.
- *
- * New users who registered before this feature existed default to reminder_hour=8
- * and timezone='UTC'. Update their records via the admin panel or DB if needed.
+ * are currently at the target local hour in their own timezone.
  */
 
 const cron       = require('node-cron');
@@ -198,48 +169,25 @@ function localDayOfWeekInTimezone(timezone) {
   }
 }
 
+// Fixed send hours — no per-user preference needed.
+const MORNING_HOUR = 10; // 10:00 AM in user's timezone
+const EVENING_HOUR = 18; // 6:00 PM  in user's timezone
+
 /**
- * Filter users whose preferred reminder_hour matches the current local hour
- * AND whose local day-of-week matches the required day(s).
+ * Filter users whose current local hour matches targetHour
+ * AND whose local day-of-week is in allowedDays.
+ * Both checks are performed in each user's own IANA timezone.
  *
  * @param {Array}           users       - onboarded user records
- * @param {number|number[]} allowedDays - day(s) of week (0=Sun…6=Sat) on which
- *                                        this message should be sent, evaluated
- *                                        in each user's own timezone.
+ * @param {number|number[]} allowedDays - day(s) of week (0=Sun…6=Sat)
+ * @param {number}          targetHour  - local hour to match (0–23)
  */
-function getUsersDueNow(users, allowedDays) {
+function getUsersDueAt(users, allowedDays, targetHour) {
   const days = Array.isArray(allowedDays) ? allowedDays : [allowedDays];
   return users.filter(user => {
-    const tz          = user.timezone     || 'UTC';
-    const preferredHr = user.reminder_hour != null ? user.reminder_hour : 8;
+    const tz = user.timezone || 'UTC';
     return days.includes(localDayOfWeekInTimezone(tz))
-        && localHourInTimezone(tz) === preferredHr;
-  });
-}
-
-// Fixed evening hour: all evening messages fire at 18:00 (6pm) local time.
-const EVENING_HOUR = 18;
-
-/**
- * Filter users whose current local hour is 18:00 (6pm) AND whose local
- * day-of-week is in allowedDays.
- *
- * Edge case: a parent who chose reminder_hour=18 would receive a morning
- * message AND an evening nudge at the same time on Mon/Wed (days that have
- * both). The hasMorningMessageToday flag is passed in to skip those users.
- *
- * @param {Array}           users                - onboarded user records
- * @param {number|number[]} allowedDays          - day(s) of week in user's timezone
- * @param {boolean}         [skipReminderHour18] - if true, exclude users whose reminder_hour is 18
- */
-function getUsersDueForEvening(users, allowedDays, skipReminderHour18 = false) {
-  const days = Array.isArray(allowedDays) ? allowedDays : [allowedDays];
-  return users.filter(user => {
-    const tz          = user.timezone || 'UTC';
-    const preferredHr = user.reminder_hour != null ? user.reminder_hour : 8;
-    if (skipReminderHour18 && preferredHr === EVENING_HOUR) return false;
-    return days.includes(localDayOfWeekInTimezone(tz))
-        && localHourInTimezone(tz) === EVENING_HOUR;
+        && localHourInTimezone(tz) === targetHour;
   });
 }
 
@@ -261,13 +209,13 @@ async function deliverToUsers(users, message) {
   return { sent, failed };
 }
 
-// ─── Job: Noticing Prompt (Monday morning) ────────────────────────────────
+// ─── Job: Noticing Prompt (Monday 10:00 AM) ─────────────────────────────────
 // Framed as a challenge to carry through the whole week.
 async function sendDailyPrompts() {
   logger.info('Noticing prompt job started');
   try {
     const allUsers = await getOnboardedUsers();
-    const dueUsers = getUsersDueNow(allUsers, 1); // 1 = Monday in user's timezone
+    const dueUsers = getUsersDueAt(allUsers, 1, MORNING_HOUR); // Monday 10 AM
     if (!dueUsers.length) {
       logger.info('Noticing prompt job: no users due this hour');
       return;
@@ -284,12 +232,12 @@ async function sendDailyPrompts() {
   }
 }
 
-// ─── Job: Moment Nudge (Wednesday morning) ────────────────────────────────
+// ─── Job: Moment Nudge (Wednesday 10:00 AM) ─────────────────────────────────
 async function sendMomentNudge() {
   logger.info('Moment nudge job started');
   try {
     const allUsers = await getOnboardedUsers();
-    const dueUsers = getUsersDueNow(allUsers, 3); // 3 = Wednesday in user's timezone
+    const dueUsers = getUsersDueAt(allUsers, 3, MORNING_HOUR); // Wednesday 10 AM
     if (!dueUsers.length) {
       logger.info('Moment nudge job: no users due this hour');
       return;
@@ -305,12 +253,12 @@ async function sendMomentNudge() {
   }
 }
 
-// ─── Job: Weekly Bonding Activity (Saturday morning) ──────────────────────
+// ─── Job: Weekly Bonding Activity (Saturday 10:00 AM) ───────────────────────
 async function sendWeeklyActivities() {
   logger.info('Weekly activity job started');
   try {
     const allUsers     = await getOnboardedUsers();
-    const dueUsers     = getUsersDueNow(allUsers, 6); // 6 = Saturday in user's timezone
+    const dueUsers     = getUsersDueAt(allUsers, 6, MORNING_HOUR); // Saturday 10 AM
     if (!dueUsers.length) {
       logger.info('Weekly activity job: no users due this hour');
       return;
@@ -364,7 +312,7 @@ async function sendWeekendActivityFollowups() {
       if (!userProfile) continue;
 
       const tz = userProfile.timezone || 'UTC';
-      // Day check in user's own timezone (0 = Sunday)
+      // Send on Sunday at 6 PM in user's own timezone
       if (localDayOfWeekInTimezone(tz) !== 0) continue;
       if (localHourInTimezone(tz) !== EVENING_HOUR) continue;
 
@@ -386,28 +334,16 @@ async function sendWeekendActivityFollowups() {
     logger.error('Weekend follow-up job failed', { error: err.message });
   }
 }
-// ─── Job: Evening Connection Nudge (Monday–Friday, evening) ─────────────────────
+// ─── Job: Evening Connection Nudge (Monday–Friday 6:00 PM) ──────────────────
 // Sends a warm reminder to put the phone down and spend 15 minutes with
 // the child. Delivered at a fixed 18:00 (6pm) local time, Mon–Fri.
-// On Mon and Wed (days with a morning message), users whose reminder_hour=18
-// are skipped to avoid sending two messages at the same time.
+// Morning messages are at 10 AM so there is no overlap risk with 6 PM.
 async function sendEveningNudge() {
   logger.info('Evening nudge job started');
   try {
     const allUsers = await getOnboardedUsers();
-    // Mon–Fri evening nudge. On Mon (1) and Wed (3) there is also a morning message,
-    // so we skip users whose reminder_hour=18 on those days to avoid a double-send.
-    // Day-of-week is evaluated in each user's own timezone.
-    const WEEKDAYS = [1, 2, 3, 4, 5]; // Mon–Fri
-    const MORNING_MESSAGE_DAYS = [1, 3]; // Mon, Wed
-    const dueUsers = allUsers.filter(user => {
-      const tz          = user.timezone || 'UTC';
-      const preferredHr = user.reminder_hour != null ? user.reminder_hour : 8;
-      const localDay    = localDayOfWeekInTimezone(tz);
-      if (!WEEKDAYS.includes(localDay)) return false;
-      if (MORNING_MESSAGE_DAYS.includes(localDay) && preferredHr === EVENING_HOUR) return false;
-      return localHourInTimezone(tz) === EVENING_HOUR;
-    });
+    const WEEKDAYS = [1, 2, 3, 4, 5]; // Mon–Fri in user's timezone
+    const dueUsers = getUsersDueAt(allUsers, WEEKDAYS, EVENING_HOUR);
     if (!dueUsers.length) {
       logger.info('Evening nudge job: no users due this hour');
       return;
@@ -423,15 +359,15 @@ async function sendEveningNudge() {
   }
 }
 
-// ─── Job: Weekly Open Question (Tuesday morning) ─────────────────────────────────────────────────
+// ─── Job: Weekly Open Question (Tuesday 10:00 AM) ───────────────────────────
 // Invites parents to share any worry, question, or curiosity about their child.
-// Sent Tuesday morning at the parent's reminder_hour. Rotates through 15 templates.
+// Sent Tuesday 10 AM in the user's timezone. Rotates through 15 templates.
 // Replies are classified as open_question_response and routed to full AI.
 async function sendWeeklyOpenQuestion() {
   logger.info('Weekly open question job started');
   try {
     const allUsers = await getOnboardedUsers();
-    const dueUsers = getUsersDueNow(allUsers, 2); // 2 = Tuesday in user's timezone
+    const dueUsers = getUsersDueAt(allUsers, 2, MORNING_HOUR); // Tuesday 10 AM
     if (!dueUsers.length) {
       logger.info('Weekly open question job: no users due this hour');
       return;
@@ -460,39 +396,37 @@ async function sendWeeklyOpenQuestion() {
 //   Sat morning : Bonding Activity
 //   Sun 18:00   : Weekend Activity Follow-up
 function startDailyScheduler() {
-  // All jobs now run every hour, every day.
-  // Day-of-week gating is handled inside each job function using
-  // localDayOfWeekInTimezone(), so each user's message fires on the
-  // correct day in *their* timezone — not the server's timezone.
-  // Previously, cron expressions like '0 * * * 1' (Monday only in server TZ)
-  // caused users in UTC+ timezones to never receive messages because their
-  // Monday morning hour fell on Sunday UTC, when the cron was not running.
+  // All jobs run every hour. Day-of-week and hour gating is handled inside
+  // each job using localDayOfWeekInTimezone() and localHourInTimezone(),
+  // so delivery is always evaluated in each user's own timezone.
+  //
+  // Fixed schedule (all times in user's local timezone):
+  //   Mon 10:00 AM — Noticing Prompt
+  //   Tue 10:00 AM — Weekly Open Question
+  //   Wed 10:00 AM — Moment Nudge
+  //   Mon–Fri 6 PM — Evening Connection Nudge
+  //   Sat 10:00 AM — Weekly Bonding Activity
+  //   Sun 6:00 PM  — Weekend Activity Follow-up
 
-  // Noticing Prompt: Monday morning in user's timezone
   cron.schedule('0 * * * *', sendDailyPrompts);
-  logger.info('Noticing prompt scheduler started (hourly, Mon gate in user TZ)');
+  logger.info('Noticing prompt scheduler started (Mon 10 AM in user TZ)');
 
-  // Weekly Open Question: Tuesday morning in user's timezone
   cron.schedule('0 * * * *', sendWeeklyOpenQuestion);
-  logger.info('Weekly open question scheduler started (hourly, Tue gate in user TZ)');
+  logger.info('Weekly open question scheduler started (Tue 10 AM in user TZ)');
 
-  // Moment Nudge: Wednesday morning in user's timezone
   cron.schedule('0 * * * *', sendMomentNudge);
-  logger.info('Moment nudge scheduler started (hourly, Wed gate in user TZ)');
+  logger.info('Moment nudge scheduler started (Wed 10 AM in user TZ)');
 
-  // Evening Connection Nudge: Mon–Fri 18:00 in user's timezone
   cron.schedule('0 * * * *', sendEveningNudge);
-  logger.info('Evening nudge scheduler started (hourly, Mon–Fri 18:00 gate in user TZ)');
+  logger.info('Evening nudge scheduler started (Mon–Fri 6 PM in user TZ)');
 }
 
 function startWeeklyScheduler() {
-  // Bonding Activity: Saturday morning in user's timezone
   cron.schedule('0 * * * *', sendWeeklyActivities);
-  logger.info('Weekly activity scheduler started (hourly, Sat gate in user TZ)');
+  logger.info('Weekly activity scheduler started (Sat 10 AM in user TZ)');
 
-  // Weekend Activity Follow-up: Sunday 18:00 in user's timezone
   cron.schedule('0 * * * *', sendWeekendActivityFollowups);
-  logger.info('Weekend activity follow-up scheduler started (hourly, Sun 18:00 gate in user TZ)');
+  logger.info('Weekend activity follow-up scheduler started (Sun 6 PM in user TZ)');
 }
 
 module.exports = {

@@ -8,7 +8,6 @@
  *   - Child name
  *   - Child age
  *   - Add a new child after onboarding
- *   - Reminder time
  *   - Timezone
  *   - Archive/remove child
  *   - Child traits (conversational — parent describes child in one message,
@@ -85,11 +84,7 @@ const TRIGGER_PHRASES = [
   'wrong age',
   'child age',
 
-  // Reminder / timezone
-  'change time',
-  'update time',
-  'change reminder',
-  'update reminder',
+  // Timezone
   'change timezone',
   'update timezone',
   'timezone',
@@ -254,12 +249,11 @@ function buildMainMenu() {
     `Reply with:\n` +
     `• *1* — My name\n` +
     `• *2* — A child's name\n` +
-    `• *3* — My reminder time\n` +
-    `• *4* — Add another child\n` +
-    `• *5* — A child's birthday\n` +
-    `• *6* — My timezone\n` +
-    `• *7* — Remove/archive a child\n` +
-    `• *8* — Update a child's personality profile\n` +
+    `• *3* — Add another child\n` +
+    `• *4* — A child's birthday\n` +
+    `• *5* — My timezone\n` +
+    `• *6* — Remove/archive a child\n` +
+    `• *7* — Update a child's personality profile\n` +
     `• *cancel* — Never mind`
   );
 }
@@ -338,9 +332,9 @@ async function handleProfileView(user, messageText) {
   if (lower.includes('settings')) {
     return (
       `Here are your current settings ⚙️\n\n` +
-      `• Reminder time: *${formatHour(user.reminder_hour ?? 8)}*\n` +
       `• Timezone: *${user.timezone || 'UTC'}*\n` +
-      `• Plan: *${user.plan_type || 'free'}*`
+      `• Plan: *${user.plan_type || 'free'}*\n` +
+      `• Scheduled messages: *10 AM* (morning) and *6 PM* (evening) your time`
     );
   }
 
@@ -381,8 +375,8 @@ async function handleProfileView(user, messageText) {
     `Here's your profile 💛\n\n` +
     `👤 *Parent*\n` +
     `Name: *${user.parent_name || 'Not set'}*\n` +
-    `Reminder time: *${formatHour(user.reminder_hour ?? 8)}*\n` +
     `Timezone: *${user.timezone || 'UTC'}*\n` +
+    `Schedule: *10 AM* (morning) & *6 PM* (evening)\n` +
     `Plan: *${user.plan_type || 'free'}*\n\n` +
     `👨‍👩‍👧 *Children*\n` +
     childrenSection +
@@ -478,17 +472,12 @@ async function handleProfileUpdate(user, messageText) {
       return `Which child would you like to rename?\n\n${buildChildrenList(children)}`;
     }
 
-    if (text === '3' || /time|reminder/i.test(text)) {
-      await setFlowSession(userId, 'profile_update', 'enter_time', session.data || {});
-      return `What time would you like to receive your prompts and activities?\n\nReply with something like *8am*, *7:30am*, or *evening*.`;
-    }
-
-    if (text === '4' || /add another child|add child|new child/i.test(text)) {
+    if (text === '3' || /add another child|add child|new child/i.test(text)) {
       await setFlowSession(userId, 'profile_update', 'enter_new_child_name', {});
       return `Of course 🌱 What is your child's name?`;
     }
 
-    if (text === '5' || /birthday|age|born/i.test(text)) {
+    if (text === '4' || /birthday|age|born/i.test(text)) {
       const children = await getChildrenByUserId(userId);
 
       if (!children.length) {
@@ -512,10 +501,10 @@ async function handleProfileUpdate(user, messageText) {
       return `Which child's birthday would you like to update?\n\n${buildChildrenList(children)}`;
     }
 
-    if (text === '6' || /timezone/i.test(text)) {
+    if (text === '5' || /timezone/i.test(text)) {
       await setFlowSession(userId, 'profile_update', 'enter_timezone', session.data || {});
       return (
-        `What timezone should I use for your reminders? 🌍\n\n` +
+        `What timezone should I use for your scheduled messages? 🌍\n\n` +
         `You can reply with something like:\n` +
         `• *Singapore*\n` +
         `• *India*\n` +
@@ -525,7 +514,7 @@ async function handleProfileUpdate(user, messageText) {
       );
     }
 
-    if (text === '7' || /remove child|archive child|delete child/i.test(text)) {
+    if (text === '6' || /remove child|archive child|delete child/i.test(text)) {
       const children = await getChildrenByUserId(userId);
 
       if (!children.length) {
@@ -546,7 +535,7 @@ async function handleProfileUpdate(user, messageText) {
     }
 
     if (
-      text === '8' ||
+      text === '7' ||
       /edit child traits|update child traits|child traits|personality|temperament|sensitivity|social style|strengths|challenges|tell you about|describe my child/i.test(text)
     ) {
       const children = await getChildrenByUserId(userId);
@@ -627,22 +616,7 @@ async function handleProfileUpdate(user, messageText) {
     return `Done! I've updated *${oldName}*'s name to *${text.trim()}*. 🌱`;
   }
 
-  // ── Reminder time ─────────────────────────────────────────────────────────
-  if (session.step === 'enter_time') {
-    const hour = parseHour(text);
-
-    if (hour === null) {
-      return `I didn't quite catch that 😊\n\nPlease reply with a time like *8am*, *7:30am*, *9*, or *evening*.`;
-    }
-
-    await updateUser(user.whatsapp_number, { reminder_hour: hour });
-    await clearFlowSession(userId);
-
-    logger.info('Profile update: reminder hour changed', { userId, hour });
-    return `Done! I'll send your prompts at *${formatHour(hour)}* your time from now on. 💛`;
-  }
-
-  // ── Add new child ─────────────────────────────────────────────────────────
+  // ── Add new child ─────────────────────────────────────────────────────────────────────────────────────
   if (session.step === 'enter_new_child_name') {
     if (!text.length) {
       return `Please type your child's name, or reply *cancel* to stop.`;
@@ -810,7 +784,7 @@ async function handleProfileUpdate(user, messageText) {
     await clearFlowSession(userId);
 
     logger.info('Profile update: timezone changed', { userId, timezone });
-    return `Done! I'll now use *${timezone}* for your reminders and scheduled messages. 💛`;
+    return `Done! I'll now use *${timezone}* for your scheduled messages. 💛`;
   }
 
   // ── Archive child ─────────────────────────────────────────────────────────
