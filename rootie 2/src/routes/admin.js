@@ -3,15 +3,19 @@
  *
  * All endpoints require x-admin-key header.
  *
- * GET  /admin/stats                    — dashboard summary
- * GET  /admin/users                    — list all users
- * GET  /admin/users/:phone             — single user detail
- * GET  /admin/users/:phone/children    — children for a user
- * GET  /admin/users/:phone/moments     — recent moments for a user
- * GET  /admin/users/:phone/history     — conversation history
- * POST /admin/users/:phone/plan        — update plan type (free/paid)
- * POST /admin/trigger/daily            — manually trigger daily prompt
- * POST /admin/trigger/weekly           — manually trigger weekly activity
+ * GET  /admin/stats                       — dashboard summary
+ * GET  /admin/users                       — list all users
+ * GET  /admin/users/:phone                — single user detail
+ * GET  /admin/users/:phone/children       — children for a user
+ * GET  /admin/users/:phone/moments        — recent moments for a user
+ * GET  /admin/users/:phone/history        — conversation history
+ * POST /admin/users/:phone/plan           — update plan type (free/paid)
+ * POST /admin/trigger/daily               — manually trigger daily prompt (Mon)
+ * POST /admin/trigger/open-question       — manually trigger weekly open question (Tue)
+ * POST /admin/trigger/nudge               — manually trigger moment nudge (Wed)
+ * POST /admin/trigger/weekly              — manually trigger weekly bonding activity (Sat)
+ * POST /admin/trigger/evening-nudge       — manually trigger evening connection nudge (Mon–Fri)
+ * POST /admin/trigger/weekend-followup    — manually trigger weekend activity follow-up (Sun)
  */
 
 const express    = require('express');
@@ -27,7 +31,10 @@ const { getFullHistory }        = require('../services/conversationService');
 const { getUsageStats }         = require('../services/usageService');
 const { sendDailyPrompts,
         sendMomentNudge,
-        sendWeeklyActivities }  = require('../scheduler/index');
+        sendWeeklyActivities,
+        sendWeeklyOpenQuestion,
+        sendEveningNudge,
+        sendWeekendActivityFollowups } = require('../scheduler/index');
 
 // ─── Admin auth middleware ─────────────────────────────────────────────────
 function adminAuth(req, res, next) {
@@ -164,6 +171,28 @@ router.post('/trigger/daily', async (req, res) => {
   }
 });
 
+// ─── POST /admin/trigger/open-question ────────────────────────────────────
+router.post('/trigger/open-question', async (req, res) => {
+  try {
+    res.json({ success: true, message: 'Weekly open question job triggered' });
+    await sendWeeklyOpenQuestion(); // run after responding
+  } catch (err) {
+    logger.error('Manual open-question trigger error', { error: err.message });
+    res.status(500).json({ error: 'Failed to trigger weekly open question' });
+  }
+});
+
+// ─── POST /admin/trigger/nudge ────────────────────────────────────────────
+router.post('/trigger/nudge', async (req, res) => {
+  try {
+    res.json({ success: true, message: 'Moment nudge job triggered' });
+    await sendMomentNudge(); // run after responding
+  } catch (err) {
+    logger.error('Manual nudge trigger error', { error: err.message });
+    res.status(500).json({ error: 'Failed to trigger moment nudge' });
+  }
+});
+
 // ─── POST /admin/trigger/weekly ───────────────────────────────────────────
 router.post('/trigger/weekly', async (req, res) => {
   try {
@@ -172,6 +201,28 @@ router.post('/trigger/weekly', async (req, res) => {
   } catch (err) {
     logger.error('Manual weekly trigger error', { error: err.message });
     res.status(500).json({ error: 'Failed to trigger weekly activities' });
+  }
+});
+
+// ─── POST /admin/trigger/evening-nudge ────────────────────────────────────
+router.post('/trigger/evening-nudge', async (req, res) => {
+  try {
+    res.json({ success: true, message: 'Evening nudge job triggered' });
+    await sendEveningNudge(); // run after responding
+  } catch (err) {
+    logger.error('Manual evening-nudge trigger error', { error: err.message });
+    res.status(500).json({ error: 'Failed to trigger evening nudge' });
+  }
+});
+
+// ─── POST /admin/trigger/weekend-followup ─────────────────────────────────
+router.post('/trigger/weekend-followup', async (req, res) => {
+  try {
+    res.json({ success: true, message: 'Weekend follow-up job triggered' });
+    await sendWeekendActivityFollowups(); // run after responding
+  } catch (err) {
+    logger.error('Manual weekend-followup trigger error', { error: err.message });
+    res.status(500).json({ error: 'Failed to trigger weekend follow-up' });
   }
 });
 
