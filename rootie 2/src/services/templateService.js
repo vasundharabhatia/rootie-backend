@@ -1,100 +1,127 @@
-/**
- * Rootie — Template Response Engine
- *
- * Every scenario has multiple response variants.
- * pick() randomly selects one each time — so parents never see the same
- * reply twice in a row.
- */
+  },
 
-// ─── Helper: pick a random item from an array ────────────────────────────────
-function pick(arr) {
-  return arr[Math.floor(Math.random() * arr.length)];
-}
+  // ── Upgrade enquiry — parent typed UPGRADE ────────────────────────────────
+  upgrade_coming_soon: () => {
+    const variants = [
+      `Thank you for your interest in Rootie Plus! 🌱💛\n\n*Rootie Plus is coming soon.* Here's what it will include:\n\n✨ *Unlimited parenting questions* — ask as much as you need, any time\n🧠 *Child Personality Blueprint* — responses personalised to your child's unique traits and temperament\n📈 *Monthly Growth Reports* — a beautiful summary of your child's moments, patterns, and growth over the month\n🔍 *Pattern Detection* — Rootie notices trends across your child's moments and gently highlights what's emerging\n🌱 *Priority support* — your questions always get the most thoughtful, in-depth responses\n\nWe'll let you know the moment it's ready. You'll be first in line. 💛`,
+    ];
+    return pick(variants);
+  },
+  // ── Non-text message ───────────────────────────────────────────────────────────────────
+  non_text: () => {
+    const variants = [
+      `I can only read text messages for now. 😊 Please type your message and I'll help!`,
+      `I'm not able to open that just yet. 😊 Send me a text message and I'll be right with you!`,
+      `I work best with text for now. 🌱 Type out what's on your mind and I'll respond!`,
+    ];
+    return pick(variants);
+  },
 
-// ─── Emoji map for moment categories ─────────────────────────────────────────
-const CATEGORY_EMOJI = {
-  kindness:             '💛',
-  empathy:              '🤝',
-  resilience:           '💪',
-  confidence:           '⭐',
-  emotional_expression: '💬',
-  curiosity:            '🔍',
-  responsibility:       '🌟',
+  // ── Safety — crisis keywords detected ───────────────────────────────────────
+  safety: () => {
+    const variants = [
+      `I hear you, and I want you to know you're not alone. 💛\n\nWhat you're feeling matters. If you or someone around you is in immediate danger, please reach out to your local emergency services or a crisis helpline in your area.\n\nI'm here for parenting support — but right now, please make sure you're safe first. 🌱`,
+    ];
+    return pick(variants);
+  },
+
+  // ── Extreme distress — rage, extreme language, severe emotional crisis ────────
+  extreme_distress: () => {
+    const variants = [
+      `I can hear that things feel really overwhelming right now. 💛\n\nWhen we're at our limit, it helps to step away for just a moment — even 60 seconds in another room.\n\nIf you feel like you or your child might be at risk, please reach out to someone who can be with you right now. You don't have to handle this alone. 🌱`,
+    ];
+    return pick(variants);
+  },
+
 };
 
-// ─── Template Variants ────────────────────────────────────────────────────────
+// ─── Public API ───────────────────────────────────────────────────────────────
 
-const TEMPLATES = {
+/**
+ * Get a randomly selected template response for the given type.
+ * Returns null if no template exists (caller falls back to full AI).
+ */
+function getTemplateResponse(type, data = {}) {
+  switch (type) {
+    case 'moment_logged':
+      return TEMPLATES.moment_logged(data.childName, data.category);
 
-  // ── Moment logged ────────────────────────────────────────────────────────────
-  moment_logged: (childName, category) => {
-    const emoji = CATEGORY_EMOJI[category] || '🌱';
-    const child = childName ? `*${childName}*` : 'your child';
+    case 'child_unclear':
+    case 'child_selection_needed':
+      return TEMPLATES.child_selection_needed();
 
-    const variants = [
-      `What a wonderful thing to see. ${emoji} I've saved that to ${child}'s journey. It's these little moments that build so much. 🌱`,
-      `That's beautiful. Thank you for sharing. ${emoji} Saved. You have a great eye for these moments. 💛`,
-      `I love that. ${emoji} Every time you notice, you're telling them — I see you. That's powerful stuff. 🌱`,
-      `That's one to remember. ${emoji} I've saved it. Keep noticing the good things — it really does add up. 💛`,
-      `Thank you for sharing that with me. ${emoji} It's been added to ${child}'s story. You're doing a wonderful job. 🌱`,
-    ];
-    return pick(variants);
-  },
+    case 'free_limit_reached':
+      return TEMPLATES.free_limit_reached();
+      case 'free_limit_first_time_plus_interest':
+  return TEMPLATES.free_limit_first_time_plus_interest();
 
-  // ── Child unclear ────────────────────────────────────────────────────────────
-  child_selection_needed: () => {
-    const variants = [
-      `That's a wonderful moment to share. Who are we celebrating? 🌱`,
-      `I'd love to save that. Which of your children was it? 💛`,
-      `That's beautiful. Just so I get it right — which child was this about? 🌱`,
-      `I want to make sure I log this for the right little one. Who was it? 💛`,
-    ];
-    return pick(variants);
-  },
+case 'free_limit_repeat_plus_interest':
+  return TEMPLATES.free_limit_repeat_plus_interest();
 
-  // ── Free plan limit reached ──────────────────────────────────────────────────
-  free_limit_reached: () => {
-    const variants = [
-      `It looks like you've used all of today's questions. 🌱 You can still log as many moments as you like — that's always free. I'll be here to chat again tomorrow! 💛`,
-      `That's all of today's questions for now. 💛 If you often have more on your mind, Rootie Plus offers unlimited chats. Reply *UPGRADE* to learn more, or we can pick this up again tomorrow. 🌱`,
-      `We've reached today's limit on questions. 🌱 You can still share any positive moments you notice. Otherwise, I'm looking forward to talking more tomorrow! 💛`,
-    ];
-    return pick(variants);
-  },
-  free_limit_first_time_plus_interest: () => {
-  return `You've used today's 5 free parenting questions. 🌱
+    case 'weekly_activity':
+      return TEMPLATES.weekly_activity(
+        data.activityText || 'Ask your child: "What was one moment today that made you proud?"'
+      );
 
-*Rootie Plus is coming soon* and it will include:
-✨ Unlimited parenting questions
-🧠 More personalised guidance based on your child
-📈 Monthly growth reports
-🔍 Pattern detection across your child's moments
+    case 'general':
+      return data.isNewUser
+        ? TEMPLATES.general()
+        : TEMPLATES.general_returning_user();
 
-I've marked that you're interested in *Rootie Plus* and I'll keep you posted when it launches. 💛
+    case 'daily_prompt_response':
+      return TEMPLATES.daily_prompt_response();
 
-Until then, you can still log *unlimited child moments* anytime — that's always free.`;
-},
-  free_limit_repeat_plus_interest: () => {
-  return `You've reached today's free question limit again. 🌱
+    case 'activity_suggestion_thanks':
+      return TEMPLATES.activity_suggestion_thanks();
 
-We've already noted that you're interested in *Rootie Plus*, and that'll be the best fit once it launches. 💛
+    case 'bonding_activity_response':
+      return TEMPLATES.bonding_activity_response();
 
-For now, come back tomorrow to ask more parenting questions.
+    case 'weekend_activity_confirmed':
+      return TEMPLATES.weekend_activity_confirmed();
+       case 'weekend_activity_skipped':
+      return TEMPLATES.weekend_activity_skipped();
 
-You can still log *unlimited child moments* anytime — that part stays free.`;
-},
+    case 'award_milestone_3':
+      return TEMPLATES.award_milestone_3();
 
-  // ── Weekly bonding activity (outbound) ───────────────────────────────────────
-  weekly_activity: (activityText) => {
-    const variants = [
-      `A little idea for the weekend... 🌱\n\n${activityText}`,
-      `Something to try this weekend... 💛\n\n${activityText}`,
-      `Here's a small way to connect this weekend... 🌱\n\n${activityText}`,
-    ];
-    return pick(variants);
-  },
+    case 'award_milestone_6':
+      return TEMPLATES.award_milestone_6();
 
-  // ── General (greeting, thanks, general chat) ─────────────────────────────────
-  general: () => {
-    const variants = [
-      `Hi there! I'm Rootie. 🌱 A calm little space for parents to notice the good things and get a bit of support.\n\nYou can share a moment you noticed in your child, or ask me a parenting question. What's on your mind? 💛`,
+    case 'award_milestone_9':
+      return TEMPLATES.award_milestone_9();
+
+    case 'award_milestone_12':
+      return TEMPLATES.award_milestone_12();
+
+    case 'award_milestone_15':
+      return TEMPLATES.award_milestone_15();
+
+    case 'non_text':
+      return TEMPLATES.non_text();
+
+    case 'safety':
+      return TEMPLATES.safety();
+
+    case 'extreme_distress':
+      return TEMPLATES.extreme_distress();
+
+    case 'upgrade_coming_soon':
+    case 'upgrade':
+      return TEMPLATES.upgrade_coming_soon();
+
+    case 'reaction_only':
+      return TEMPLATES.reaction_only();
+
+    case 'evening_nudge_response':
+      return TEMPLATES.evening_nudge_response();
+
+    case 'open_question_response':
+      return TEMPLATES.open_question_response();
+
+    default:
+      return null; // caller should fall back to full AI
+  }
+}
+
+module.exports = { getTemplateResponse, TEMPLATES, pick };
