@@ -1,3 +1,253 @@
+/**
+ * Rootie — Template Response Engine
+ *
+ * Every scenario has multiple response variants.
+ * pick() randomly selects one each time — so parents never see the same
+ * reply twice in a row.
+ */
+
+// ─── Helper: pick a random item from an array ────────────────────────────────
+function pick(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+// ─── Emoji map for moment categories ─────────────────────────────────────────
+const CATEGORY_EMOJI = {
+  kindness:             '💛',
+  empathy:              '🤝',
+  resilience:           '💪',
+  confidence:           '⭐',
+  emotional_expression: '💬',
+  curiosity:            '🔍',
+  responsibility:       '🌟',
+};
+
+// ─── Template Variants ────────────────────────────────────────────────────────
+
+const TEMPLATES = {
+
+  // ── Moment logged ────────────────────────────────────────────────────────────
+  moment_logged: (childName, category) => {
+    const emoji = CATEGORY_EMOJI[category] || '🌱';
+    const child = childName ? `*${childName}*` : 'your child';
+
+    const variants = [
+      `What a wonderful thing to see. ${emoji} I've saved that to ${child}'s journey. It's these little moments that build so much. 🌱`,
+      `That's beautiful. Thank you for sharing. ${emoji} Saved. You have a great eye for these moments. 💛`,
+      `I love that. ${emoji} Every time you notice, you're telling them — I see you. That's powerful stuff. 🌱`,
+      `That's one to remember. ${emoji} I've saved it. Keep noticing the good things — it really does add up. 💛`,
+      `Thank you for sharing that with me. ${emoji} It's been added to ${child}'s story. You're doing a wonderful job. 🌱`,
+    ];
+    return pick(variants);
+  },
+
+  // ── Child unclear ────────────────────────────────────────────────────────────
+  child_selection_needed: () => {
+    const variants = [
+      `That's a wonderful moment to share. Who are we celebrating? 🌱`,
+      `I'd love to save that. Which of your children was it? 💛`,
+      `That's beautiful. Just so I get it right — which child was this about? 🌱`,
+      `I want to make sure I log this for the right little one. Who was it? 💛`,
+    ];
+    return pick(variants);
+  },
+
+  // ── Free plan limit reached ──────────────────────────────────────────────────
+  free_limit_reached: () => {
+    const variants = [
+      `It looks like you've used all of today's questions. 🌱 You can still log as many moments as you like — that's always free. I'll be here to chat again tomorrow! 💛`,
+      `That's all of today's questions for now. 💛 If you often have more on your mind, Rootie Plus offers unlimited chats. Reply *UPGRADE* to learn more, or we can pick this up again tomorrow. 🌱`,
+      `We've reached today's limit on questions. 🌱 You can still share any positive moments you notice. Otherwise, I'm looking forward to talking more tomorrow! 💛`,
+    ];
+    return pick(variants);
+  },
+  free_limit_first_time_plus_interest: () => {
+  return `You've used today's 5 free parenting questions. 🌱
+
+*Rootie Plus is coming soon* and it will include:
+✨ Unlimited parenting questions
+🧠 More personalised guidance based on your child
+📈 Monthly growth reports
+🔍 Pattern detection across your child's moments
+
+I've marked that you're interested in *Rootie Plus* and I'll keep you posted when it launches. 💛
+
+Until then, you can still log *unlimited child moments* anytime — that's always free.`;
+},
+  free_limit_repeat_plus_interest: () => {
+  return `You've reached today's free question limit again. 🌱
+
+We've already noted that you're interested in *Rootie Plus*, and that'll be the best fit once it launches. 💛
+
+For now, come back tomorrow to ask more parenting questions.
+
+You can still log *unlimited child moments* anytime — that part stays free.`;
+},
+
+  // ── Weekly bonding activity (outbound) ───────────────────────────────────────
+  weekly_activity: (activityText) => {
+    const variants = [
+      `A little idea for the weekend... 🌱\n\n${activityText}`,
+      `Something to try this weekend... 💛\n\n${activityText}`,
+      `Here's a small way to connect this weekend... 🌱\n\n${activityText}`,
+    ];
+    return pick(variants);
+  },
+
+  // ── General (greeting, thanks, general chat) ─────────────────────────────────
+  general: () => {
+    const variants = [
+      `Hi there! I'm Rootie. 🌱 A calm little space for parents to notice the good things and get a bit of support.\n\nYou can share a moment you noticed in your child, or ask me a parenting question. What's on your mind? 💛`,
+      `Hello! I'm Rootie. 🌱 I'm here to help you track the small, positive moments in your child's life, or to help with parenting questions.\n\nWhat would you like to do? 💛`,
+    ];
+    return pick(variants);
+  },
+
+  // ── General (returning, already onboarded user) ───────────────────────────────
+  general_returning_user: () => {
+    const variants = [
+      `Good to hear from you. 💛`,
+      `Hello! How are things today? 🌱`,
+      `Hi there. What's on your mind? 💛`,
+      `I'm here. 🌱`,
+    ];
+    return pick(variants);
+  },
+
+  // ── Reaction only (emoji, short ack, ❤️, 👍, etc.) ────────────────────────────────
+  reaction_only: () => {
+    const variants = [
+      `💛`,
+      `🌱`,
+      `😊`,
+      `✨`,
+      `💛🌱`,
+    ];
+    return pick(variants);
+  },
+
+  // ── Evening nudge response ────────────────────────────────────────────────
+  evening_nudge_response: () => {
+    const variants = [
+      `That's all I needed to hear. 💛 Go enjoy that time — it's the best thing you can do tonight.`,
+      `🌱 That's the spirit. Even 15 minutes of real presence makes such a difference. Enjoy it.`,
+      `Love that. 💛 Those little pockets of time together are what they'll remember.`,
+      `😊 Go for it. Put the phone down, be with them. I'll be here when you're back.`,
+      `That's everything. 🌱 Connection is the whole thing — you've got this.`,
+      `Aww. 💛 That's what it's all about. Enjoy every second.`,
+    ];
+    return pick(variants);
+  },
+
+  // ── Open question response (parent shares a worry or question) ─────────────────
+  // Note: open_question_response with actual content will be routed to full AI.
+  // This template is only used if the AI is unavailable or the message is very short.
+  open_question_response: () => {
+    const variants = [
+      `Thank you for sharing that with me. 🌱 That kind of honesty takes courage. Let me think about this with you...`,
+      `I hear you. 💛 This is exactly the kind of thing worth talking through. Tell me a bit more if you can — I want to help properly.`,
+      `That's a real and important thing to sit with. 🌱 You're not alone in this. Let's talk it through.`,
+    ];
+    return pick(variants);
+  },
+
+  // ── Daily prompt response ────────────────────────────────────────────────
+  daily_prompt_response: () => {
+    const variants = [
+      `Thank you for sharing that. 🌱 Every moment of noticing matters. You're doing beautifully. 💛`,
+      `I love that you took a moment to notice. 💛 That awareness is one of the most powerful things a parent can offer. 🌱`,
+      `That's wonderful. 🌱 The fact that you're paying attention says so much about the parent you are. 💛`,
+      `Beautiful. 💛 Noticing is the first step to everything. You're building something meaningful, one moment at a time. 🌱`,
+      `That's the kind of thing that stays with a child. 🌱 Keep noticing — you're building something real. 💛`,
+    ];
+    return pick(variants);
+  },
+
+  // ── Activity suggestion thanks (parent says thanks / will try after Rootie suggests activity) ──
+  activity_suggestion_thanks: () => {
+    const variants = [
+      `That's wonderful! I hope you and your little one have a great time. 🌟 Let me know how it goes! 💛`,
+      `Yay! I hope it's a lovely moment together. 🌱 You're doing something really special by making time for this. 💛`,
+      `That's the spirit! 💛 Enjoy every moment of it. I'm rooting for you both. 🌱`,
+      `Wonderful! Those little moments together are what they'll remember. Have fun! ✨💛`,
+      `Love that! 🌱 Go enjoy it — and feel free to share how it went. I'd love to hear! 💛`,
+    ];
+    return pick(variants);
+  },
+
+  // ── Bonding activity response ────────────────────────────────────────────────
+  bonding_activity_response: () => {
+    const variants = [
+      `That's wonderful to hear. 🌱 Those conversations stay with children long after they happen. 💛`,
+      `I love hearing that. 💛 Time like that — unhurried, present — is exactly what children remember. 🌱`,
+      `That sounds like a really special moment. 🌱 You showed up, and that's everything. 💛`,
+      `What a lovely thing to do together. 💛 Connection is the foundation of it all. 🌱`,
+    ];
+    return pick(variants);
+  },
+
+  // ── Weekend Activity: Confirmed Completion ───────────────────────────────────
+  weekend_activity_confirmed: () => {
+    const variants = [
+      `That's wonderful! I've marked it as complete. 🌱 Every little moment of connection builds something beautiful. 💛`,
+      `Amazing! So glad you had a chance to do it. 💛 I've logged it. Keep up the wonderful work. 🌱`,
+      `I love to hear that! Thank you for making the time. 🌱 That connection is what it's all about. 💛`,
+    ];
+    return pick(variants);
+  },
+    weekend_activity_skipped: () => {
+    const variants = [
+      `That’s completely okay. 💛 These things happen. I’ll count this one as skipped, and we can always try again next weekend. 🌱`,
+      `No worries at all. 🌱 I’ve marked this one as not done. Parenting is full already — there’s always another chance next time. 💛`,
+      `That’s okay. 💛 I’ve marked it as skipped for this week. Small moments still count, even when plans don’t happen. 🌱`,
+    ];
+    return pick(variants);
+  },
+
+  // ── Connection Awards (Weekend Activity Milestones) ──────────────────────────
+  award_milestone_3: () => {
+    return (
+      `That's wonderful! And I've just noticed something...\n\n` +
+      `You've completed 3 weekend activities! 🎉\n\n` +
+      `In recognition of your commitment to building connection, you've earned your first Connection Award: *The Spark Starter* ✨\n\n` +
+      `You're not just doing activities; you're intentionally creating small, powerful moments of connection that your child will carry with them for life. That's incredible work. Keep going. 💛`
+    );
+  },
+
+  award_milestone_6: () => {
+    return (
+      `Amazing! And I have some lovely news...\n\n` +
+      `That's 6 weekend activities completed! 🎉\n\n` +
+      `For your consistent effort in strengthening your family bond, you've earned the *Bridge Builder* award 🌉\n\n` +
+      `You're turning small moments into a steady, reliable bridge of connection that your child can always count on. Thank you for the beautiful work you're doing. 🌱`
+    );
+  },
+
+  award_milestone_9: () => {
+    return (
+      `I love hearing that! And I've just spotted a new milestone...\n\n` +
+      `You've now completed 9 weekend activities! 🎉\n\n` +
+      `For weaving connection into the fabric of your family life, you've earned the *Heart Weaver* award 🧶\n\n` +
+      `These aren't just separate moments anymore; they're threads in a beautiful, strong tapestry of love and trust you're creating every day. This is how lifelong security is built. 💛`
+    );
+  },
+
+  award_milestone_12: () => {
+    return (
+      `That's fantastic! And I have to share this with you...\n\n` +
+      `You've completed 12 weekend activities! 🎉\n\n` +
+      `For your incredible dedication to creating lasting family memories, you've earned the *Memory Maker* award 📸\n\n` +
+      `You're doing more than just spending time; you're building a library of positive memories that will shape your child's sense of self and belonging for years to come. This is a profound gift. 🌱`
+    );
+  },
+
+  award_milestone_15: () => {
+    return (
+      `Wonderful! And look at this incredible achievement...\n\n` +
+      `That's 15 weekend activities completed! 🎉\n\n` +
+      `For your leadership and unwavering focus on what matters most, you've earned our highest honor: *The Connection Captain* 🚢\n\n` +
+      `You are steering your family with intention, navigating the everyday with a compass pointed firmly at connection. This is the heart of it all. Thank you for letting me be a small part of your journey. 💛`
+    );
   },
 
   // ── Upgrade enquiry — parent typed UPGRADE ────────────────────────────────
