@@ -19,7 +19,7 @@ const { getTemplateResponse }        = require('../services/templateService');
 const { recordActivitySent } = require('../services/activityTrackingService');
 const { writeCronLog, isLoggingActive, minutesRemaining } = require('../services/cronLogService');
 
-// ─── Weekly Bonding Activities (7 items, rotating) ───────────────────────
+// ─── Weekly Bonding Activities (37 items, rotating, ages 4–10) ──────────
 const WEEKLY_ACTIVITIES = [
   'Ask your child: *"What was one moment this week that made you proud?"* Listen without jumping in.',
   'Try a "Rose and Thorn" conversation at dinner: each person shares one good thing and one hard thing from their week.',
@@ -28,31 +28,80 @@ const WEEKLY_ACTIVITIES = [
   'Ask your child to teach you something they know how to do. Let them be the expert.',
   'Take a 10-minute walk together. No destination. Just notice things around you.',
   'Ask your child: *"If you could change one rule in our house, what would it be?"* Really listen.',
+
+  // ── Kindness & empathy ──
+  'Do a secret kind act together this weekend — a thank-you drawing for a neighbour, grandparent or the security guard. Let your child choose who it\'s for.',
+  'While reading a story together, pause and ask: *"How do you think they\'re feeling right now? How can you tell?"*',
+  'Ask your child: *"Who do you think needs a little kindness this week?"* Make a simple plan together to help them.',
+  'Make a "thank-you list" together: 5 people who helped your family this week, and one thing each of them did.',
+  'Sort out a few toys or books together to give away. Talk about who might enjoy them next.',
+
+  // ── Confidence ──
+  'Let your child plan one part of the weekend — lunch, an afternoon activity, or the route for a walk. Follow their plan, even if it\'s not how you\'d do it.',
+  'Tell your child about a time you made a mistake as a kid and what you learned. Then ask: *"Has anything like that happened to you?"*',
+  'Ask your child: *"What\'s something you can do now that you couldn\'t do last year?"* Celebrate it together.',
+  'Give your child a real job this weekend — washing vegetables, setting the table, watering plants. Thank them like a teammate, not a helper.',
+  'Let your child be the "photographer" for a day. At bedtime, look through their photos together and ask why they chose each one.',
+
+  // ── Feelings ──
+  'Play "Feelings Charades" — take turns showing a feeling using only your face and body while the other guesses.',
+  'At bedtime, ask: *"If today was weather, what would it be — sunny, cloudy, stormy, rainbow?"* Then ask why.',
+  'Draw together: each of you draws how your week felt using only colours and shapes. Then explain your drawings to each other.',
+  'Make a "calm-down list" together: 5 things that help your child feel better when they\'re upset. Stick it on the fridge.',
+  'Share one small thing that was hard for you this week, in a simple way. When you name your feelings, it helps them name theirs.',
+
+  // ── Curiosity ──
+  'Go on a "noticing walk" — each of you finds 5 things you\'ve never noticed before on a street you know well.',
+  'Ask your child to give you a tour of their room as if you\'re a visitor who\'s never seen it. Ask questions about everything.',
+  'Ask your child: *"What\'s something you\'ve been wondering about?"* Find the answer together, or make up your silliest guesses first.',
+  'Make something simple together in the kitchen — a sandwich, a smoothie, a salad. Let your child measure, pour and taste-test.',
+  'Try a "sink or float" experiment in a bowl of water with 8 things from around the house. Guess first, then test.',
+
+  // ── Resilience ──
+  'Build the tallest tower you can from blocks, books or cups. When it falls, cheer and try again.',
+  'Ask your child: *"What was the trickiest thing this week? How did you get through it?"* Praise the effort, not the outcome.',
+  'Learn something new together that neither of you is good at — a dance move, a card trick, drawing an animal. Laugh at the wobbly first tries.',
+  'Do a puzzle or play a board game together. If your child gets stuck or loses, stay calm and say: *"That was tricky. Want to try again?"*',
+
+  // ── Connection ──
+  'Have a "yes half-hour": for 30 minutes, say yes to whatever your child suggests (as long as it\'s safe).',
+  'Look at old photos or videos together. Tell your child a story about when they were little.',
+  'Make up a story together, one sentence each, taking turns. See where it goes.',
+  'Have a snack or breakfast somewhere unusual — on the floor, on the balcony, in a blanket fort.',
+  'Ask your child: *"What\'s your favourite thing we do together?"* Then do it this weekend.',
+  'Make a simple "family handshake" together. Use it every morning this week.',
 ];
 
-// ─── Evening Connection Nudges (10 items, rotating) ──────────────────────
-// Warm, personal reminders to put the phone down and be present.
+// ─── Evening Connection Nudges (25 items, rotating, ages 4–10) ───────────
+// Each nudge invites the parent to spend a few minutes with their child and
+// gives one small, specific thing to do together.
 // Sent Mon–Fri at 6:00 PM in each parent's timezone.
 const EVENING_NUDGES = [
-  `The work day is done. 🌙 Your child doesn't need a perfect parent tonight — just a present one. Even 15 minutes of real, phone-free time together does more than you know. 💛`,
-
-  `Hey — before the evening disappears, try this: put your phone face-down for just 15 minutes and let your child lead. No agenda, no teaching. Just you, fully there. 🌱 Those are the moments they carry forever.`,
-
-  `Quick reminder from Rootie 🌱 — connection doesn't need a plan. It just needs you to show up. Sit with your child tonight. Ask them one question and really listen to the answer. That's it. 💛`,
-
-  `The dishes can wait. The emails can wait. 🌙 But your child's childhood? That's happening right now. Steal 15 minutes tonight — just the two of you, doing whatever they want. You won't regret it.`,
-
-  `Research shows that 15 minutes of undivided attention a day is enough to make a child feel deeply loved and secure. 💛 You've got 15 minutes tonight. Put the phone down. Go find them. 🌱`,
-
-  `Evening nudge 🌙 — your child has been waiting all day to tell you something. They might not say it directly. But if you sit with them, get on their level, and just *be there* — it'll come out. 💛 Try it tonight.`,
-
-  `Parenting tip from Rootie 🌱: the most powerful thing you can do tonight isn't a lesson or a lecture. It's just being genuinely curious about your child's world. Ask them: *"What was the best part of your day?"* Then listen like it's the most interesting thing you've heard all week. 💛`,
-
-  `You made it through another day. 🌙 So did they. Tonight, before bedtime, try a little ritual: sit together, no screens, and each share one good thing from the day. It takes 5 minutes. It builds a lifetime. 🌱`,
-
-  `Here's something worth knowing 💛 — children who have at least one parent who is consistently, warmly present grow up with stronger emotional regulation, better friendships, and more resilience. You don't have to be perfect. You just have to *show up*. Tonight's a good night to start. 🌱`,
-
-  `Evening check-in from Rootie 🌙 — how are *you* doing? Parenting is hard, and you're doing it anyway. Take a breath. Then go find your child and do something small together — a hug, a silly game, five minutes of their favourite show. Connection is the whole thing. 💛`,
+  'Spend 5 minutes with your child tonight 🌙 Play *"Two Truths and a Fib"*: each of you says 3 things about your day — one is made up. Guess which! 💛',
+  'Sit with your child for a few minutes tonight and ask: *"What\'s one thing you\'re looking forward to tomorrow?"* Then share yours. 🌱',
+  'Take 5 minutes with your child before bed tonight 🕵️ Give them a *secret mission* for tomorrow: one kind thing to do for someone without getting caught. Ask how it went at bedtime tomorrow. 💛',
+  'Spend dinner time with your child tonight and let them *pick the music* 🎶 Dancing while you set the table is completely allowed.',
+  'Sit down with your child at dinner tonight and play *"High, Low, Funny"*: everyone shares the best, the hardest, and the silliest part of their day. 🌙',
+  'Spend a few minutes with your child tonight with this question 💛 *"If you could have any superpower for just one day, what would you do with it?"* Then tell them yours.',
+  'Spend 10 minutes with your child tonight swapping roles — *your child is the parent, you\'re the child.* Let them tuck you in. Expect giggles. 🌱',
+  'Take a quiet moment with your child tonight and ask: *"Who did you sit with today? What did you talk about?"* Small questions open big doors. 💛',
+  'Spend 10 minutes with your child tonight building a *blanket fort* 🏕️ Read one book inside it. That\'s the whole plan.',
+  'Spend 5 minutes with your child tonight playing *"I Spy" with a twist* 🌙 Use feelings instead of colours: *"I spy someone who looks… sleepy."*',
+  'Spend 10 minutes with your child before bath time tonight having a *dance party* 💃 They pick 3 songs, and everyone dances, no matter what. 🌱',
+  'Sit with your child at dinner tonight and play *"Would You Rather"*: *"Would you rather talk to animals or fly?"* Take turns asking. 💛',
+  'Spend 5 minutes with your child tonight playing *"Back Drawing"* 🌙 Draw a shape or letter on their back with your finger and let them guess. Then swap.',
+  'Spend a few minutes with your child at bedtime tonight telling them *one story from when you were their age.* They\'ll ask for it again, guaranteed. 💛',
+  'Lie down with your child for 5 minutes tonight and do *"5 Slow Breaths"* together: breathe in like smelling a flower 🌸, out like blowing out a candle 🕯️. Five times. That\'s it.',
+  'Spend 10 minutes with your child tonight and ask them to *teach you a game they play at school.* Let them be the expert. 🌱',
+  'Sit with your child tonight and ask: *"What was the best moment of your week so far?"* Share yours too — then tell me about it. I\'d love to save it. 💛',
+  'Spend dinner time with your child tonight as a *picnic on the living-room floor* 🧺 Same food, new spot, big smiles.',
+  'Spend 5 minutes with your child tonight playing *"Guess the Sound"* 🎧 One of you closes your eyes while the other makes a sound with something in the house — a spoon, keys, paper. Take turns. 🌱',
+  'Take a moment with your child tonight to tell them *one specific thing you were proud of them for this week* — not just "good job", but exactly what you noticed. 💛',
+  'Spend 5 minutes with your child tonight on a *"you-choose"*: they pick what you do together, and you say yes. 🌱',
+  'Spend a moment with your child tonight choosing *one word that describes them* — brave, funny, kind. Write it on a sticky note and put it on their pillow together. 💛',
+  'Spend a few minutes with your child at bedtime tonight and ask: *"What\'s one thing that made you smile today?"* End the day on a good note. 🌙',
+  'Spend 10 minutes with your child tonight making up a *silly bedtime story*: you start a sentence, they finish it. Keep going until someone laughs too hard. 🌱',
+  'Spend 5 minutes with your child tonight at the window spotting *3 things in the sky*: stars, the moon, a plane, a funny-shaped cloud. ✨',
 ];
 
 // ─── Rotating counters ───────────────────────────────────────────────────────────────────
