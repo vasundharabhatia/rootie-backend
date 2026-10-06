@@ -198,3 +198,82 @@ async function sendWeeklyActivities() {
           logger.error('Failed to deliver weekly activity', {
             userId: user.user_id, phone: user.whatsapp_number, error: err.message,
           });
+          failed++;
+        }
+      }
+      logger.info('[CRON DONE] Weekly activity job complete', { sent, failed, total: dueUsers.length });
+    } else {
+      logger.info('[CRON SKIP] Weekly activity: no users due this hour');
+    }
+
+    await writeCronLog({
+      jobName: 'weekly_activity', utcTime: utcNow,
+      totalUsers: allUsers.length, matched: dueUsers.length,
+      sent, failed, userDetails: diagnostics,
+    });
+  } catch (err) {
+    logger.error('[CRON ERROR] Weekly activity job failed', { error: err.message, stack: err.stack });
+    await writeCronLog({ jobName: 'weekly_activity', utcTime: new Date().toISOString(), totalUsers: 0, matched: 0, notes: err.message });
+  }
+}
+
+// ─── Job: Evening Connection Nudge (Monday–Friday 6:00 PM) ──────────────────
+// Sends a warm reminder to put the phone down and spend 15 minutes with
+// the child. Delivered at a fixed 18:00 (6pm) local time, Mon–Fri.
+// Morning messages are at 10 AM so there is no overlap risk with 6 PM.
+async function sendEveningNudge() {
+  const utcNow = new Date().toISOString();
+  logger.info('[CRON TICK] Evening nudge job fired', { utcNow });
+  try {
+    const allUsers = await getOnboardedUsers();
+    const WEEKDAYS = [1, 2, 3, 4, 5]; // Mon–Fri in user's timezone
+    const diagnostics = buildUserDiagnostics(allUsers, WEEKDAYS, EVENING_HOUR);
+    logger.info('[CRON DIAG] Evening nudge user check', {
+      totalUsers: allUsers.length,
+      targetDays: 'Mon–Fri',
+      targetHour: EVENING_HOUR,
+      users: diagnostics,
+    });
+
+    const dueUsers = allUsers.filter((_, i) => diagnostics[i].matched);
+
+    let sent = null, failed = null;
+    if (dueUsers.length) {
+      const nudge = EVENING_NUDGES[eveningIndex % EVENING_NUDGES.length];
+      eveningIndex++;
+      ({ sent, failed } = await deliverToUsers(dueUsers, nudge));
+      logger.info('[CRON DONE] Evening nudge job complete', { sent, failed, total: dueUsers.length });
+    } else {
+      logger.info('[CRON SKIP] Evening nudge: no users due this hour');
+    }
+
+    await writeCronLog({
+      jobName: 'evening_nudge', utcTime: utcNow,
+      totalUsers: allUsers.length, matched: dueUsers.length,
+      sent, failed, userDetails: diagnostics,
+    });
+  } catch (err) {
+    logger.error('[CRON ERROR] Evening nudge job failed', { error: err.message, stack: err.stack });
+    await writeCronLog({ jobName: 'evening_nudge', utcTime: new Date().toISOString(), totalUsers: 0, matched: 0, notes: err.message });
+  }
+}
+
+// ─── Start schedulers ───────────────────────────────────────────────────────────────────
+// All jobs run every hour. Day-of-week and hour gating is handled inside
+// each job, so delivery is always evaluated in each user's own timezone.
+function startDailyScheduler() {
+  cron.schedule('0 * * * *', sendEveningNudge);
+  logger.info('Evening nudge scheduler started (Mon–Fri 6 PM in user TZ)');
+}
+
+function startWeeklyScheduler() {
+  cron.schedule('0 * * * *', sendWeeklyActivities);
+  logger.info('Weekly activity scheduler started (Sat 10 AM in user TZ)');
+}
+
+module.exports = {
+  startDailyScheduler,
+  startWeeklyScheduler,
+  sendWeeklyActivities,
+  sendEveningNudge,
+};
