@@ -3,26 +3,9 @@
  *
  * Scheduled message types (all free for all onboarded users, zero OpenAI cost):
  *
- * 1. Noticing Prompt       — Monday    10:00 AM (user's timezone)
- * 2. Weekly Open Question  — Tuesday   10:00 AM (user's timezone)
- * 3. Moment Nudge          — Wednesday 10:00 AM (user's timezone)
- * 4. Weekly Bonding Activity — Saturday 10:00 AM (user's timezone)
- * 5. Evening Connection Nudge — Mon–Fri 6:00 PM  (user's timezone)
- * 6. Weekend Activity Follow-up — Sunday 6:00 PM (user's timezone)
+ * 1. Evening Connection Nudge — Mon–Fri 6:00 PM  (user's timezone)
+ * 2. Weekly Bonding Activity  — Saturday 10:00 AM (user's timezone)
  *
- * ── Fixed-time weekly rhythm ─────────────────────────────────────────────────
- *
- *   Day        10:00 AM (local)               6:00 PM (local)
- *   ─────────  ─────────────────────────────  ──────────────────────────
- *   Monday     Noticing Prompt                Evening Connection Nudge
- *   Tuesday    Weekly Open Question           Evening Connection Nudge
- *   Wednesday  Moment Nudge                   Evening Connection Nudge
- *   Thursday   —                              Evening Connection Nudge
- *   Friday     —                              Evening Connection Nudge
- *   Saturday   Bonding Activity               —
- *   Sunday     —                              Weekend Activity Follow-up
- *
- * All times are fixed — no per-user reminder_hour preference is used.
  * The scheduler runs every hour (at :00). On each tick it checks which users
  * are currently at the target local hour in their own timezone.
  */
@@ -33,49 +16,8 @@ const { getOnboardedUsers } = require('../services/userService');
 const { sendMessage }       = require('../services/whatsappService');
 const { saveMessage }       = require('../services/conversationService');
 const { getTemplateResponse }        = require('../services/templateService');
-const {
-  recordActivitySent,
-  getUsersForMondayFollowup,
-  markFollowupSent,
-} = require('../services/activityTrackingService');
+const { recordActivitySent } = require('../services/activityTrackingService');
 const { writeCronLog, isLoggingActive, minutesRemaining } = require('../services/cronLogService');
-
-// ─── Noticing Prompts (20 items, rotating) ────────────────────────────────
-// Framed as something to watch for throughout the coming week, not just today.
-const DAILY_PROMPTS = [
-  'This week, keep an eye out for a moment when your child shows kindness — even something tiny. When you spot it, tell them what you saw. 🌱',
-  'Your challenge this week: notice one moment when your child tries something hard. Watch how they handle it — without jumping in. 💛',
-  'This week, catch your child being patient. It might happen fast — a pause before reacting, waiting their turn. Notice it out loud when it does. 🌱',
-  'This week, look for a moment of pure curiosity in your child. What are they drawn to? What questions do they ask? 💛',
-  'Your challenge this week: spot a moment when your child shows empathy — a kind word, a gentle gesture, noticing someone else\'s feelings. 🌱',
-  'This week, watch for resilience. When your child hits a frustrating moment, notice how they bounce back — even a little. 💛',
-  'This week, look for a moment when your child takes responsibility for something — big or small — without being asked. 🌱',
-  'Your challenge this week: listen for a moment when your child expresses a big feeling using words instead of actions. That\'s a real skill. 💛',
-  'This week, notice a moment when your child helps someone without being asked. It might be quick — don\'t miss it. 🌱',
-  'Your challenge this week: catch your child being proud of something they made or did. Notice their face. Tell them you saw it. 💛',
-  'This week, look for a moment when your child shares something — a toy, a snack, their time — with someone else. 🌱',
-  'This week, notice a moment when your child gets completely absorbed in something. What are they exploring? What does that tell you about them? 💛',
-  'Your challenge this week: catch a moment when your child uses their words to work through a problem instead of giving up or getting upset. 🌱',
-  'This week, watch for a moment when your child shows respect for someone else\'s feelings — a pause, a softening, a kind choice. 💛',
-  'This week, notice a moment when your child cleans up or tidies something without being reminded. Small, but worth celebrating. 🌱',
-  'Your challenge this week: listen for a really thoughtful question from your child. What are they trying to understand about the world? 💛',
-  'This week, look for a moment of courage in your child — trying something new, speaking up, doing something even when they\'re a little scared. 🌱',
-  'Your challenge this week: notice a moment when your child is a genuinely good listener to someone else. That\'s a rare and beautiful thing. 💛',
-  'This week, watch for a moment when your child waits for something they want — and handles it well. Patience is a muscle. 🌱',
-  'This week, notice a moment when your child says "please" or "thank you" without being prompted. Small habit, big character. 💛',
-];
-
-// ─── Moment Nudges (8 items, rotating) ───────────────────────────────────
-const MOMENT_NUDGES = [
-  'Mid-week check-in 🌱 — did anything lovely happen with your child this week? Even something tiny counts. Tap to log it.',
-  'One small moment is all it takes. 💛 Did you notice anything about your child this week worth remembering?',
-  'A quick check-in 🌱 — did your child do or say anything this week that made you smile? Log it here.',
-  'Moments add up. 💛 Anything worth noting from this week — big or small?',
-  'Even a 10-second moment matters. 🌱 Did you catch anything in your child this week worth saving?',
-  'Your child is growing every day. 💛 Notice anything this week? Share it here and I\'ll save it for you.',
-  'A little nudge 🌱 — did anything happen this week that you\'d love to remember a year from now?',
-  'Kind Roots mid-week check-in 💛 — any moments of kindness, curiosity, or courage from your child this week?',
-];
 
 // ─── Weekly Bonding Activities (7 items, rotating) ───────────────────────
 const WEEKLY_ACTIVITIES = [
@@ -90,7 +32,7 @@ const WEEKLY_ACTIVITIES = [
 
 // ─── Evening Connection Nudges (10 items, rotating) ──────────────────────
 // Warm, personal reminders to put the phone down and be present.
-// Sent Mon–Fri at each parent's evening hour (reminder_hour + 10, max 21).
+// Sent Mon–Fri at 6:00 PM in each parent's timezone.
 const EVENING_NUDGES = [
   `The work day is done. 🌙 Your child doesn't need a perfect parent tonight — just a present one. Even 15 minutes of real, phone-free time together does more than you know. 💛`,
 
@@ -114,11 +56,8 @@ const EVENING_NUDGES = [
 ];
 
 // ─── Rotating counters ───────────────────────────────────────────────────────────────────
-let promptIndex  = 0;
-let nudgeIndex   = 0;
 let weeklyIndex  = 0;
 let eveningIndex = 0;
-let openQIndex   = 0;
 
 // ─── Timezone-aware user filtering ───────────────────────────────────────────────────────────────────
 /**
@@ -226,82 +165,6 @@ async function deliverToUsers(users, message) {
   return { sent, failed };
 }
 
-// ─── Job: Noticing Prompt (Monday 10:00 AM) ─────────────────────────────────
-// Framed as a challenge to carry through the whole week.
-async function sendDailyPrompts() {
-  const utcNow = new Date().toISOString();
-  logger.info('[CRON TICK] Noticing prompt job fired', { utcNow });
-  try {
-    const allUsers = await getOnboardedUsers();
-    const diagnostics = buildUserDiagnostics(allUsers, 1, MORNING_HOUR);
-    logger.info('[CRON DIAG] Noticing prompt user check', {
-      totalUsers: allUsers.length,
-      targetDay: 'Mon',
-      targetHour: MORNING_HOUR,
-      users: diagnostics,
-    });
-
-    const dueUsers = allUsers.filter((_, i) => diagnostics[i].matched);
-
-    let sent = null, failed = null;
-    if (dueUsers.length) {
-      const promptText = DAILY_PROMPTS[promptIndex % DAILY_PROMPTS.length];
-      promptIndex++;
-      const message    = getTemplateResponse('daily_prompt', { promptText });
-      ({ sent, failed } = await deliverToUsers(dueUsers, message));
-      logger.info('[CRON DONE] Noticing prompt job complete', { sent, failed, total: dueUsers.length });
-    } else {
-      logger.info('[CRON SKIP] Noticing prompt: no users due this hour');
-    }
-
-    await writeCronLog({
-      jobName: 'noticing_prompt', utcTime: utcNow,
-      totalUsers: allUsers.length, matched: dueUsers.length,
-      sent, failed, userDetails: diagnostics,
-    });
-  } catch (err) {
-    logger.error('[CRON ERROR] Noticing prompt job failed', { error: err.message, stack: err.stack });
-    await writeCronLog({ jobName: 'noticing_prompt', utcTime: new Date().toISOString(), totalUsers: 0, matched: 0, notes: err.message });
-  }
-}
-
-// ─── Job: Moment Nudge (Wednesday 10:00 AM) ─────────────────────────────────
-async function sendMomentNudge() {
-  const utcNow = new Date().toISOString();
-  logger.info('[CRON TICK] Moment nudge job fired', { utcNow });
-  try {
-    const allUsers = await getOnboardedUsers();
-    const diagnostics = buildUserDiagnostics(allUsers, 3, MORNING_HOUR);
-    logger.info('[CRON DIAG] Moment nudge user check', {
-      totalUsers: allUsers.length,
-      targetDay: 'Wed',
-      targetHour: MORNING_HOUR,
-      users: diagnostics,
-    });
-
-    const dueUsers = allUsers.filter((_, i) => diagnostics[i].matched);
-
-    let sent = null, failed = null;
-    if (dueUsers.length) {
-      const nudge = MOMENT_NUDGES[nudgeIndex % MOMENT_NUDGES.length];
-      nudgeIndex++;
-      ({ sent, failed } = await deliverToUsers(dueUsers, nudge));
-      logger.info('[CRON DONE] Moment nudge job complete', { sent, failed, total: dueUsers.length });
-    } else {
-      logger.info('[CRON SKIP] Moment nudge: no users due this hour');
-    }
-
-    await writeCronLog({
-      jobName: 'moment_nudge', utcTime: utcNow,
-      totalUsers: allUsers.length, matched: dueUsers.length,
-      sent, failed, userDetails: diagnostics,
-    });
-  } catch (err) {
-    logger.error('[CRON ERROR] Moment nudge job failed', { error: err.message, stack: err.stack });
-    await writeCronLog({ jobName: 'moment_nudge', utcTime: new Date().toISOString(), totalUsers: 0, matched: 0, notes: err.message });
-  }
-}
-
 // ─── Job: Weekly Bonding Activity (Saturday 10:00 AM) ───────────────────────
 async function sendWeeklyActivities() {
   const utcNow = new Date().toISOString();
@@ -335,212 +198,3 @@ async function sendWeeklyActivities() {
           logger.error('Failed to deliver weekly activity', {
             userId: user.user_id, phone: user.whatsapp_number, error: err.message,
           });
-          failed++;
-        }
-      }
-      logger.info('[CRON DONE] Weekly activity job complete', { sent, failed, total: dueUsers.length });
-    } else {
-      logger.info('[CRON SKIP] Weekly activity: no users due this hour');
-    }
-
-    await writeCronLog({
-      jobName: 'weekly_activity', utcTime: utcNow,
-      totalUsers: allUsers.length, matched: dueUsers.length,
-      sent, failed, userDetails: diagnostics,
-    });
-  } catch (err) {
-    logger.error('[CRON ERROR] Weekly activity job failed', { error: err.message, stack: err.stack });
-    await writeCronLog({ jobName: 'weekly_activity', utcTime: new Date().toISOString(), totalUsers: 0, matched: 0, notes: err.message });
-  }
-}
-
-// ─── Job: Weekend Activity Follow-up (Sunday evening) ─────────────────────
-// Sends a gentle check-in to every user who received a weekend activity
-// but has not yet been asked if they completed it.
-// Runs every hour; fires for each user when their local time is Sunday 18:00.
-async function sendWeekendActivityFollowups() {
-  const utcNow = new Date().toISOString();
-  logger.info('[CRON TICK] Weekend follow-up job fired', { utcNow });
-  try {
-    const usersForFollowup = await getUsersForMondayFollowup();
-    logger.info('[CRON DIAG] Weekend follow-up: pending users', { count: usersForFollowup.length });
-
-    const allUsers = await getOnboardedUsers();
-    const userMap  = new Map(allUsers.map(u => [u.user_id, u]));
-    const diagnostics = [];
-
-    let sent = 0, failed = 0;
-    for (const row of usersForFollowup) {
-      const userProfile = userMap.get(row.user_id);
-      if (!userProfile) {
-        logger.warn('[CRON DIAG] Weekend follow-up: user profile not found', { userId: row.user_id });
-        diagnostics.push({ userId: row.user_id, timezone: 'unknown', localDay: '?', localHour: '?', matched: false });
-        continue;
-      }
-
-      const tz       = userProfile.timezone || 'UTC';
-      const localDay = localDayOfWeekInTimezone(tz);
-      const localHr  = localHourInTimezone(tz);
-      const dayNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-      const matched  = localDay === 0 && localHr === EVENING_HOUR;
-      diagnostics.push({ userId: row.user_id, timezone: tz, localDay: dayNames[localDay], localHour: localHr, matched });
-      logger.info('[CRON DIAG] Weekend follow-up user check', {
-        userId: row.user_id, timezone: tz,
-        localDay: dayNames[localDay], localHour: localHr, matched,
-      });
-
-      if (!matched) continue;
-
-      try {
-        const message = getTemplateResponse('weekend_activity_followup');
-        await sendMessage(row.whatsapp_number, message);
-        await saveMessage(row.user_id, 'assistant', message, null);
-        await markFollowupSent(row.activity_id);
-        logger.info('Scheduled message sent', { userId: row.user_id, phone: row.whatsapp_number });
-        sent++;
-      } catch (err) {
-        logger.error('Failed to send weekend follow-up', {
-          userId: row.user_id, phone: row.whatsapp_number, error: err.message,
-        });
-        failed++;
-      }
-    }
-    logger.info('[CRON DONE] Weekend follow-up job complete', { sent, failed });
-
-    await writeCronLog({
-      jobName: 'weekend_followup', utcTime: utcNow,
-      totalUsers: usersForFollowup.length, matched: sent + failed,
-      sent, failed, userDetails: diagnostics,
-    });
-  } catch (err) {
-    logger.error('[CRON ERROR] Weekend follow-up job failed', { error: err.message, stack: err.stack });
-    await writeCronLog({ jobName: 'weekend_followup', utcTime: new Date().toISOString(), totalUsers: 0, matched: 0, notes: err.message });
-  }
-}
-
-// ─── Job: Evening Connection Nudge (Monday–Friday 6:00 PM) ──────────────────
-// Sends a warm reminder to put the phone down and spend 15 minutes with
-// the child. Delivered at a fixed 18:00 (6pm) local time, Mon–Fri.
-// Morning messages are at 10 AM so there is no overlap risk with 6 PM.
-async function sendEveningNudge() {
-  const utcNow = new Date().toISOString();
-  logger.info('[CRON TICK] Evening nudge job fired', { utcNow });
-  try {
-    const allUsers = await getOnboardedUsers();
-    const WEEKDAYS = [1, 2, 3, 4, 5]; // Mon–Fri in user's timezone
-    const diagnostics = buildUserDiagnostics(allUsers, WEEKDAYS, EVENING_HOUR);
-    logger.info('[CRON DIAG] Evening nudge user check', {
-      totalUsers: allUsers.length,
-      targetDays: 'Mon–Fri',
-      targetHour: EVENING_HOUR,
-      users: diagnostics,
-    });
-
-    const dueUsers = allUsers.filter((_, i) => diagnostics[i].matched);
-
-    let sent = null, failed = null;
-    if (dueUsers.length) {
-      const nudge = EVENING_NUDGES[eveningIndex % EVENING_NUDGES.length];
-      eveningIndex++;
-      ({ sent, failed } = await deliverToUsers(dueUsers, nudge));
-      logger.info('[CRON DONE] Evening nudge job complete', { sent, failed, total: dueUsers.length });
-    } else {
-      logger.info('[CRON SKIP] Evening nudge: no users due this hour');
-    }
-
-    await writeCronLog({
-      jobName: 'evening_nudge', utcTime: utcNow,
-      totalUsers: allUsers.length, matched: dueUsers.length,
-      sent, failed, userDetails: diagnostics,
-    });
-  } catch (err) {
-    logger.error('[CRON ERROR] Evening nudge job failed', { error: err.message, stack: err.stack });
-    await writeCronLog({ jobName: 'evening_nudge', utcTime: new Date().toISOString(), totalUsers: 0, matched: 0, notes: err.message });
-  }
-}
-
-// ─── Job: Weekly Open Question (Tuesday 10:00 AM) ───────────────────────────
-// Invites parents to share any worry, question, or curiosity about their child.
-// Sent Tuesday 10 AM in the user's timezone. Rotates through 15 templates.
-// Replies are classified as open_question_response and routed to full AI.
-async function sendWeeklyOpenQuestion() {
-  const utcNow = new Date().toISOString();
-  logger.info('[CRON TICK] Weekly open question job fired', { utcNow });
-  try {
-    const allUsers = await getOnboardedUsers();
-    const diagnostics = buildUserDiagnostics(allUsers, 2, MORNING_HOUR);
-    logger.info('[CRON DIAG] Weekly open question user check', {
-      totalUsers: allUsers.length,
-      targetDay: 'Tue',
-      targetHour: MORNING_HOUR,
-      users: diagnostics,
-    });
-
-    const dueUsers = allUsers.filter((_, i) => diagnostics[i].matched);
-
-    let sent = null, failed = null;
-    if (dueUsers.length) {
-      const message = getTemplateResponse('weekly_open_question');
-      openQIndex++;
-      ({ sent, failed } = await deliverToUsers(dueUsers, message));
-      logger.info('[CRON DONE] Weekly open question job complete', { sent, failed, total: dueUsers.length });
-    } else {
-      logger.info('[CRON SKIP] Weekly open question: no users due this hour');
-    }
-
-    await writeCronLog({
-      jobName: 'weekly_open_question', utcTime: utcNow,
-      totalUsers: allUsers.length, matched: dueUsers.length,
-      sent, failed, userDetails: diagnostics,
-    });
-  } catch (err) {
-    logger.error('[CRON ERROR] Weekly open question job failed', { error: err.message, stack: err.stack });
-    await writeCronLog({ jobName: 'weekly_open_question', utcTime: new Date().toISOString(), totalUsers: 0, matched: 0, notes: err.message });
-  }
-}
-
-// ─── Start schedulers ───────────────────────────────────────────────────────────────────
-function startDailyScheduler() {
-  // All jobs run every hour. Day-of-week and hour gating is handled inside
-  // each job using localDayOfWeekInTimezone() and localHourInTimezone(),
-  // so delivery is always evaluated in each user's own timezone.
-  //
-  // Fixed schedule (all times in user's local timezone):
-  //   Mon 10:00 AM — Noticing Prompt
-  //   Tue 10:00 AM — Weekly Open Question
-  //   Wed 10:00 AM — Moment Nudge
-  //   Mon–Fri 6 PM — Evening Connection Nudge
-  //   Sat 10:00 AM — Weekly Bonding Activity
-  //   Sun 6:00 PM  — Weekend Activity Follow-up
-
-  cron.schedule('0 * * * *', sendDailyPrompts);
-  logger.info('Noticing prompt scheduler started (Mon 10 AM in user TZ)');
-
-  cron.schedule('0 * * * *', sendWeeklyOpenQuestion);
-  logger.info('Weekly open question scheduler started (Tue 10 AM in user TZ)');
-
-  cron.schedule('0 * * * *', sendMomentNudge);
-  logger.info('Moment nudge scheduler started (Wed 10 AM in user TZ)');
-
-  cron.schedule('0 * * * *', sendEveningNudge);
-  logger.info('Evening nudge scheduler started (Mon–Fri 6 PM in user TZ)');
-}
-
-function startWeeklyScheduler() {
-  cron.schedule('0 * * * *', sendWeeklyActivities);
-  logger.info('Weekly activity scheduler started (Sat 10 AM in user TZ)');
-
-  cron.schedule('0 * * * *', sendWeekendActivityFollowups);
-  logger.info('Weekend activity follow-up scheduler started (Sun 6 PM in user TZ)');
-}
-
-module.exports = {
-  startDailyScheduler,
-  startWeeklyScheduler,
-  sendDailyPrompts,
-  sendMomentNudge,
-  sendWeeklyActivities,
-  sendWeekendActivityFollowups,
-  sendEveningNudge,
-  sendWeeklyOpenQuestion,
-};
