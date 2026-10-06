@@ -15,7 +15,7 @@
  *   55 → Timezone confirmation (when phone-prefix guess was low/medium/null)
  *   6  → Onboarding complete
  *
- * Scheduled messages fire at fixed times (10 AM morning, 6 PM evening) in
+ * Scheduled messages fire at fixed times (Mon–Fri 6 PM, Sat 10 AM) in
  * each user's own timezone — no reminder_hour preference is collected.
  *
  * The personality step (3b) is optional — parents can skip it with "skip",
@@ -244,6 +244,20 @@ function parseHour(text) {
 function isSkipReply(text) {
   return /^(skip|later|no thanks|not now|maybe later|nope|n\/a|na|-)$/i.test(text.trim())
     || text.trim().length === 0;
+}
+
+// ─── Onboarding complete message ─────────────────────────────────────────────
+function buildCompletionMessage(parentName) {
+  return (
+    `You're all set, *${parentName || 'there'}*! 🌟\n\n` +
+    `Here's what to expect from me:\n` +
+    `• 🌙 *Weekday evenings at 6 PM* — one small, fun thing to do with your child that night\n` +
+    `• 🧺 *Saturday mornings at 10 AM* — a little weekend activity to try together\n\n` +
+    `And any time you like:\n` +
+    `• 📝 *Share a moment* — tell me something lovely your child did and I'll save it to their story\n` +
+    `• 💬 *Ask me anything* — big feelings, tricky behaviour, everyday parenting questions\n\n` +
+    `What's on your mind? 💛`
+  );
 }
 
 async function handleOnboarding(user, messageText, displayName) {
@@ -506,16 +520,7 @@ What's your name? 😊`,
           });
 
           const freshUser = await getUserByPhone(user.whatsapp_number);
-          return (
-            `You're all set, *${freshUser?.parent_name || 'there'}*! 🌟\n\n` +
-            `I'll send you a little thought or activity a few times a week — ` +
-            `mornings at *10 AM* and evenings at *6 PM* your time.\n\n` +
-            `Here's what I can do for you:\n` +
-            `• 📝 *Log moments* — share a small positive thing you noticed in your child and I'll save it to their story\n` +
-            `• 💬 *Answer questions* — ask me anything about parenting, child behaviour, or development\n` +
-            `• 🌱 *Send weekly prompts* — I'll nudge you with things to notice, try, and reflect on\n\n` +
-            `What's on your mind? You can ask me a question, or share a moment you noticed today. 💛`
-          );
+          return buildCompletionMessage(freshUser?.parent_name);
         }
 
         // Medium/low confidence or no match → ask for city/country
@@ -566,16 +571,7 @@ What's your name? 😊`,
       });
 
       const freshUser = await getUserByPhone(user.whatsapp_number);
-      return (
-        `You're all set, *${freshUser?.parent_name || 'there'}*! 🌟\n\n` +
-        `I'll send you a little thought or activity a few times a week — ` +
-        `mornings at *10 AM* and evenings at *6 PM* your time.\n\n` +
-        `Here's what I can do for you:\n` +
-        `• 📝 *Log moments* — share a small positive thing you noticed in your child and I'll save it to their story\n` +
-        `• 💬 *Answer questions* — ask me anything about parenting, child behaviour, or development\n` +
-        `• 🌱 *Send weekly prompts* — I'll nudge you with things to notice, try, and reflect on\n\n` +
-        `What's on your mind? You can ask me a question, or share a moment you noticed today. 💛`
-      );
+      return buildCompletionMessage(freshUser?.parent_name);
     }
 
     default: {
